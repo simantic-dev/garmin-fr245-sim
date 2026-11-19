@@ -89,12 +89,18 @@ class Peer:
                 msg[9] = 0x10 + self.handle
                 msg[10:26] = f[1][4:20]
                 self.ctx.send(frame(0x1983, msg))
-            if f[0] == 0x1982 and f[1][:1] in (b"\x16", b"\x12", b"\x14", b"\x08", b"\x29"):
-                # Set-name command (16 <app id> 1a 00 ... "Forerunner 245"). 0x223bd0 sets pending op 0x16
-                # (0x223c28); case 0x16 -> 0x223622 advances on a status-0 event of that type.
+            if f[0] == 0x1982 and f[1][:1] in (b"\x16", b"\x12", b"\x14", b"\x08") or (
+                    f[0] == 0x1982 and f[1][:1] not in (b"\x37", b"\x42", b"\x01")):
+                # Generic status-ok event: [3] app id, [4] = the command byte (pending op for 0x16, 0x12, 0x14, 8 per
+                # 0x223578 case 0x223622). For 0x29, 0x2b, 0x2f (GATT table build, response handler 0x2250a0) the
+                # firmware needs a non-zero u16 at [9..10]: 0x2253d0 sends nothing more while 0x1fffe888 is 0.
+                # MODELED SIMPLIFICATION: handles are numbered from 0x0100 in arrival order; real values unknown.
                 msg = bytearray(16)
                 msg[3] = f[1][1]
-                msg[4] = f[1][0]  # pending op equals the command byte for 0x16 (0x223c28) and 0x12 (0x223c40); 0x14 and 8 unverified
+                msg[4] = f[1][0]
+                self.handle += 1
+                msg[9] = self.handle
+                msg[10] = 1
                 self.ctx.send(frame(0x1983, msg))
             if f[0] == 0x1982 and f[1][:1] == b"\x42":
                 # Second host command (42 <app id> 05 00 06). The step machine 0x223bd0 sets its pending-op byte
