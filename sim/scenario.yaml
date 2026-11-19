@@ -9,4 +9,4 @@ media:
     connect: [dut.lpuart3, dut.link]
   - type: uart
     connect: [dut.lpuart0, dut.cyw]
-timeout: 80
+timeout: 90

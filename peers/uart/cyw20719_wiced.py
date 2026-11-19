@@ -11,6 +11,19 @@
 START_US = 5_000_000
 PERIOD_US = 1_000_000
 HEADER = 0x19
+# "Stack enabled" event. Read off the firmware, v3.10: the radio-event task (0xd18b0) hands opcodes 0x1984..0x1986
+# to 0x31614, which forwards the payload as a message to 0x30f00. A message whose byte 0 is 0x24 sets the
+# stack-enabled flag 0x1fffe948 and runs every callback registered through 0x30e7c. Until then that registration
+# returns 5, and the BLE init 0x226774 leaves its state machine (0x1fffe988) at 1 for good. The callback 0x226588
+# then runs the deferred init 0x2264dc. Layout (0x31498, case 0x24): [0]=type, [3..4]=body length, [6..7]=data
+# length, [8..11]=data pointer slot, all zero here, so the 12-byte message carries no data.
+# MODELED SIMPLIFICATION: which opcode in 0x1984..0x1986 the real radio uses, and the body of its 0x24 message
+# (BD address, 27-byte max payload at 0x30f00), are not known; this sends the empty message under 0x1984.
+STACK_UP_OPCODE = 0x1984
+# Once only (each 0x24 re-runs the init and restarts its state machine). The sim cannot say when LPUART0 is enabled
+# (about 55.4 s here), so this is a boot-time stand-in.
+STACK_UP_US = 56_000_000
+STACK_UP_MSG = bytes([0x24]) + bytes(11)
 
 
 def frame(opcode, payload=b"", b1=0x00, b2=0x13):
@@ -44,6 +57,8 @@ class Peer:
         self.ctx = ctx
         self.parser = Parser()
         self.heard = False
+        self.stack_up = False
+        self.handle = 0
         ctx.schedule_oneshot(START_US)
 
     def on_timer(self):
@@ -52,6 +67,9 @@ class Peer:
         # the host sends its first byte.
         if not self.heard:
             self.ctx.send(frame(0x1B4A))
+            if self.ctx.now_us >= STACK_UP_US and not self.stack_up:
+                self.stack_up = True
+                self.ctx.send(frame(STACK_UP_OPCODE, STACK_UP_MSG))
             self.ctx.schedule_oneshot(PERIOD_US)
 
     def on_byte(self, b):
@@ -59,3 +77,44 @@ class Peer:
         f = self.parser.feed(b)
         if f:
             self.ctx.info(f"cyw rx opcode={f[0]:#06x} payload={f[1].hex()}")
+            if f[0] == 0x1982 and f[1][:1] == b"\x37" and len(f[1]) >= 20:
+                # Add-service command (37 <app id> 14 00 <16-byte UUID>), nine of them from the table at 0x223ccc.
+                # The handler (0x223578 case 0x37 -> 0x2235ce) matches [10..25] against that table, stores [9]
+                # as the service's handle and counts matches; the step machine moves on after the ninth.
+                # MODELED SIMPLIFICATION: handles are numbered from 0x10 in arrival order; real values unknown.
+                self.handle += 1
+                msg = bytearray(26)
+                msg[3] = f[1][1]
+                msg[4] = 0x37
+                msg[9] = 0x10 + self.handle
+                msg[10:26] = f[1][4:20]
+                self.ctx.send(frame(0x1983, msg))
+            if f[0] == 0x1982 and f[1][:1] in (b"\x16", b"\x12", b"\x14", b"\x08", b"\x29"):
+                # Set-name command (16 <app id> 1a 00 ... "Forerunner 245"). 0x223bd0 sets pending op 0x16
+                # (0x223c28); case 0x16 -> 0x223622 advances on a status-0 event of that type.
+                msg = bytearray(16)
+                msg[3] = f[1][1]
+                msg[4] = f[1][0]  # pending op equals the command byte for 0x16 (0x223c28) and 0x12 (0x223c40); 0x14 and 8 unverified
+                self.ctx.send(frame(0x1983, msg))
+            if f[0] == 0x1982 and f[1][:1] == b"\x42":
+                # Second host command (42 <app id> 05 00 06). The step machine 0x223bd0 sets its pending-op byte
+                # 0x1fffe971 to 6 (0x223c00) and its response handler 0x223578 (case 6 -> 0x223622) advances to the next step on an
+                # event with [4] == 6 and [2] == 0 (status ok).
+                # MODELED SIMPLIFICATION: that command 0x42 is answered by event type 6 is inferred from that
+                # pairing, not from a spec; the other event bytes are zero.
+                msg = bytearray(16)
+                msg[3] = f[1][1]  # app id: 0x2261ac drops events whose [3] differs from the id in 0x1fffe986
+                msg[4] = 6
+                self.ctx.send(frame(0x1983, msg))
+            if f[0] == 0x1982 and len(f[1]) >= 7 and f[1][:1] == b"\x01":
+                # The host registered an app (0x1982: [4..6] = tag). Its handler 0x2261ac, run from opcode 0x1983
+                # via 0x31614/0x30e44, takes [4]==1 as the registration reply, needs [10..12] equal to the tag
+                # it sent and stores [9], the app id, in 0x1fffe986 (0xff = still waiting); the BLE state
+                # machine waits on that byte in state 5 (0x22642c).
+                # MODELED SIMPLIFICATION: app id 1 and the rest of the 0x1983 event (bytes 0..3, 5..8) are
+                # not known; they are zero.
+                msg = bytearray(16)
+                msg[4] = 1
+                msg[9] = 1
+                msg[10:13] = f[1][4:7]
+                self.ctx.send(frame(0x1983, msg))
