@@ -5,6 +5,9 @@
 # MODELED SIMPLIFICATION: the datasheet was not reachable, so addresses other than 0x00/0x01 follow the
 # FR245 firmware's accesses (it reads 3 bytes at register 3 while INTB is low), not the datasheet. Other
 # registers are plain storage; no buck/LDO/charger/AP_CMD behaviour, no interrupt sources (use raise()).
+# USB cable (config {"usb_vbus_at_ms": N}): MODELED SIMPLIFICATION, a forced stand-in for the charger input. At N ms the
+# peer sets STATUS1 (reg 7) bit 3 and raises INT0 (reg 3) bit 3. Found by probing: that pair is the one INT0/STATUS
+# combination found that makes the firmware call its USB controller init (0xC9260); the datasheet names are unknown.
 class Slave:
     def __init__(self, ctx):
         self.ctx = ctx
@@ -12,6 +15,14 @@ class Slave:
         self.regs[0x00] = self.regs[0x01] = 0x02
         self.ptr = 0
         ctx.gpio(0).set(True)
+        at = getattr(ctx, "config", {}).get("usb_vbus_at_ms")
+        if at is not None:
+            ctx.schedule_oneshot(int(at * 1000))
+
+    def on_timer(self):
+        self.ctx.info(f"max20303 t={self.ctx.now_us / 1e6:.4f} USB VBUS forced: STATUS1 bit 3, INT0 bit 3")
+        self.regs[0x07] |= 0x08
+        self.raise_int(0x03, 0x08)
 
     NAMES = {0: "HardwareID", 1: "FirmwareID", 3: "INT0", 4: "INT1", 5: "INT2"}
 

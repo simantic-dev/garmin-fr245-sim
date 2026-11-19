@@ -1,0 +1,16 @@
+# Warm boot from the preloaded factory flash (out/factory_nor.bin): logo at 2.75 s, language screen at 5.9 s, then a person-paced button script (one press every 2.5 s, events in overlay.board, `btn`) walks the setup wizard to the watch face at 78.8 s.
+machines:
+  dut:
+    mcu: MK28FN2M0VMI15
+    overlay: ../out/overlay_usb.board
+    elf: ../out/fr245.elf
+    preload: ["../out/factory_nor.bin@0x68000000"]
+media:
+  - type: uart
+    connect: [dut.lpuart3, dut.link]
+  - type: uart
+    connect: [dut.lpuart0, dut.cyw]
+  - type: ble
+    connect: [dut.cyw, dut.phone]
+    pcap: ../out/ble.pcap
+timeout: 70

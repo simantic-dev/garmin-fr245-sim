@@ -2,6 +2,7 @@
 # Fetch Garmin's own FR245 v3.10 firmware (not in this repo), then run it on pyrite and write PNG frames to out/frames/.
 # Usage: ./run.sh [--first-boot]   (default: preload out/factory_nor.bin, made once by scripts/make_factory_flash.sh;
 #        --first-boot runs the ~55 s flash format instead)
+# Usage: ./run.sh --usb   enumerates the watch over USB (scripts/usb_host.py), writes docs/usb.pcap.
 # Usage: IRQ=0 ./run.sh drops the IRQ panel.   SIM=/path/to/sim picks a sim binary built with the MK28FN2M0VMI15 chip.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -10,6 +11,20 @@ SIM="${SIM:-sim}"
 SCEN=sim/scenario.yaml
 if [ "${1:-}" = "--first-boot" ]; then SCEN=sim/scenario_firstboot.yaml
 else [ -f out/factory_nor.bin ] || scripts/make_factory_flash.sh; fi
+if [ "${1:-}" = "--usb" ]; then
+  # Plug the watch's USB cable in at 8 s of guest time (a forced PMIC status, see peers/i2c/max20303.py), enumerate it as a host
+  # over --usb-raw and write docs/usb.pcap. Needs the factory flash like the default run. Real time, about 50 s.
+  [ -f out/factory_nor.bin ] || scripts/make_factory_flash.sh
+  python3 - <<'PY'
+s = open("sim/overlay.board").read()
+open("out/overlay_usb.board", "w").write(s.replace('    file: "peers/i2c/max20303.py"\n', '    file: "peers/i2c/max20303.py"\n    config: "{\\"usb_vbus_at_ms\\":8000}"\n', 1))
+PY
+  mkdir -p out/frames
+  (timeout 280 "$SIM" run --scenario sim/scenario_usb.yaml --usb-raw dut.usbhs:7000 >out/usb_run.log 2>&1 &)
+  sleep 1
+  python3 scripts/usb_host.py 7000 docs/usb.pcap 25
+  exit 0
+fi
 rm -rf out/frames && mkdir -p out/frames
 # QuadSPI0 SFAR and IPCR are traced; qspi_summary.py reduces them to one line per virtual second, so run.log stays small
 # IRQ=0 skips the interrupt panel data. Otherwise --trace-interrupts is aggregated live by irq_bins.py (100 ms bins) into
