@@ -92,3 +92,12 @@ def test_alerts():
     d.on_write(bytes([0x14, 0xB4, 0xFF]))             # MIN = 180 * 20 mV = 3.6 V
     assert rw(d, 0x1A) & 0x0400                        # VL
     assert rw(d, 0x0C) & 0x20
+
+
+def test_discharge_is_slow_and_monotonic():
+    d = make()
+    d.ctx.now_us = 0
+    v0, s0 = int.from_bytes(rd(d, 0x02), "big") * 78.125e-6, rd(d, 0x04)[0]
+    d.ctx.now_us = 3_600_000_000
+    v1, s1 = int.from_bytes(rd(d, 0x02), "big") * 78.125e-6, rd(d, 0x04)[0]
+    assert (s0, s1) == (80, 78) and 3.89 < v0 < 3.91 and v1 < v0

@@ -12,8 +12,12 @@
 # (the algorithm and its battery model are not published); CRATE reads 0 (no load history).
 # Not modelled: sleep/hibernate timing (HibStat stays 0), the ALRT pin, the ID byte of VRESET/ID
 # (the datasheet gives none, reads 0), the voltage-reset (VR) comparator.
-CELL_V = 3.85         # volts at the cell
-SOC_PERCENT = 60.0    # state of charge, percent
+CELL_V = 3.9          # volts at the cell at t = 0
+SOC_PERCENT = 80.0    # state of charge at t = 0, percent
+# MODELED SIMPLIFICATION: a slow linear discharge (nothing in the firmware supplies a load profile): SOC falls
+# DRAIN_PCT_PER_H, the cell falls V_PER_PCT per percent lost.
+DRAIN_PCT_PER_H = 2.0
+V_PER_PCT = 0.004
 
 VCELL, SOC, MODE, VERSION, HIBRT, CONFIG = 0x02, 0x04, 0x06, 0x08, 0x0A, 0x0C
 VALRT, CRATE, VRESET, STATUS, CMD = 0x14, 0x16, 0x18, 0x1A, 0xFE
@@ -36,15 +40,21 @@ class Slave:
         self.ptr = 0
         self.regs = dict(RESET)
 
+    def _soc_pct(self):
+        return max(0.0, SOC_PERCENT - DRAIN_PCT_PER_H * self.ctx.now_us / 3.6e9)
+
+    def _cell_v(self):
+        return CELL_V - V_PER_PCT * (SOC_PERCENT - self._soc_pct())
+
     def _vcell(self):
-        return min(0xFFFF, round(CELL_V / VCELL_LSB_V))
+        return min(0xFFFF, round(self._cell_v() / VCELL_LSB_V))
 
     def _soc(self):
-        return min(0xFFFF, round(SOC_PERCENT * 256))
+        return min(0xFFFF, round(self._soc_pct() * 256))
 
     def _update_alerts(self):
         """CONFIG.ALRT and STATUS.VH/VL follow the cell against the thresholds."""
-        v20 = round(CELL_V / VALRT_LSB_V)
+        v20 = round(self._cell_v() / VALRT_LSB_V)
         lo, hi = self.regs[VALRT] >> 8, self.regs[VALRT] & 0xFF
         st = self.regs[STATUS]
         if v20 > hi:
@@ -52,7 +62,7 @@ class Slave:
         if v20 < lo:
             st |= VL
         self.regs[STATUS] = st
-        low_soc = SOC_PERCENT <= 32 - (self.regs[CONFIG] & ATHD_MASK)
+        low_soc = self._soc_pct() <= 32 - (self.regs[CONFIG] & ATHD_MASK)
         if low_soc or st & (VH | VL):
             self.regs[CONFIG] |= ALRT
 
