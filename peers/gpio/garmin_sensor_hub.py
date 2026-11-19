@@ -29,6 +29,7 @@ class Slave:
         if line != RESET_LINE:
             return
         self.running = bool(level)
+        self.ctx.info(f"hub t={self.ctx.now_us / 1e6:.4f} RESET_N {'released' if level else 'asserted'}")
         self.low = False
         self.ctx.gpio(SRDY_LINE).set(True)
         if self.running:

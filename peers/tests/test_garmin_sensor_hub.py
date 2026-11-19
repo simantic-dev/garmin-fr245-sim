@@ -16,6 +16,7 @@ class Ctx:
     def __init__(self):
         self.now_us, self.srdy, self.timers, self.config = 0, None, [], {"boot_us": 1000, "period_us": 5000, "pulse_us": 100}
     def gpio(self, n): return Pin(self)
+    def info(self, s): pass
     def schedule_oneshot(self, us): self.timers.append(self.now_us + us)
 
 

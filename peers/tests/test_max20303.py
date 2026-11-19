@@ -9,6 +9,10 @@ spec.loader.exec_module(m)
 class Ctx:
     def __init__(self):
         self.lines = {}
+        self.now_us = 0
+
+    def info(self, s):
+        pass
 
     def gpio(self, n):
         c = self

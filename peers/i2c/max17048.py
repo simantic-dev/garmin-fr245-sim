@@ -26,6 +26,10 @@ RESET = {MODE: 0x0000, HIBRT: 0x1930, CONFIG: 0x971C, VALRT: 0x00FF, VRESET: 0x9
 WRITABLE = {MODE: 0x6000, HIBRT: 0xFFFF, CONFIG: 0xFFDF, VALRT: 0xFFFF, VRESET: 0xFE00, STATUS: 0x7F00}
 
 
+NAMES = {VCELL: "VCELL", SOC: "SOC", MODE: "MODE", VERSION: "VERSION", HIBRT: "HIBRT", CONFIG: "CONFIG",
+         VALRT: "VALRT", 0x3E: "LOCK/UNLOCK", CRATE: "CRATE", VRESET: "VRESET/ID", STATUS: "STATUS", CMD: "CMD"}
+
+
 class Slave:
     def __init__(self, ctx):
         self.ctx = ctx
@@ -66,10 +70,17 @@ class Slave:
             return self.regs[a]
         return 0
 
+    def _log(self, verb, a, w):
+        n = NAMES.get(a & ~1, "TABLE (battery model)" if 0x40 <= a < 0xA0 else f"reg {a:#04x}")
+        val = {VCELL: f"{w * VCELL_LSB_V:.2f} V", SOC: f"{w / 256:.0f} %"}.get(a & ~1, f"{w:#06x}")
+        self.ctx.info(f"max17048 t={self.ctx.now_us / 1e6:.4f} {verb} {n} = {val}")
+
     def on_write(self, data):
         if not data:
             return
         self.ptr = data[0]
+        for i in range(1, len(data) - 1, 2):
+            self._log("write", self.ptr + i - 1, (data[i] << 8) | data[i + 1])
         rest = data[1:]
         for i in range(0, len(rest) - 1, 2):
             a, v = (self.ptr & ~1) & 0xFF, (rest[i] << 8) | rest[i + 1]
@@ -83,6 +94,8 @@ class Slave:
 
     def on_read(self, count):
         out = bytearray()
+        if self.ptr % 2 == 0 and count >= 2:
+            self._log("read", self.ptr, self._word(self.ptr))
         for _ in range(count):
             w = self._word(self.ptr & ~1)
             out.append(w >> 8 if self.ptr % 2 == 0 else w & 0xFF)

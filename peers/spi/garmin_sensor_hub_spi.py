@@ -15,7 +15,12 @@ class Slave:
         self.trace = bool(cfg.get("trace", False))
         self.name = cfg.get("name", "hubspi")
 
+    last = -10**9
+
     def on_transmit(self, b):
+        if self.ctx.now_us - self.last > 1000:  # first byte of a burst
+            self.ctx.info(f"hubspi t={self.ctx.now_us / 1e6:.4f} SPI transfer starts, first byte {b:02x}, hub does not answer")
+        self.last = self.ctx.now_us
         if self.trace:
             print(f"{self.name} {self.ctx.now_us} {b:02x}", file=sys.stderr)
         return IDLE

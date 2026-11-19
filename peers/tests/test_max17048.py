@@ -9,6 +9,8 @@ PEER = Path(__file__).resolve().parents[1] / "i2c" / "max17048.py"
 
 
 class FakeCtx:
+    now_us = 0
+
     def log(self, *a):
         pass
 

@@ -3,7 +3,7 @@
 ![Garmin FR245 boot and use, with the firmware's UART traffic and BLE packets](docs/screens/demo.gif)
 
 Stock Garmin firmware, unmodified; right panel = the firmware's real UART traffic and the BLE packets it caused, same simulated clock.
-Left: the display pixels the firmware clocks out (boot logo, language screen, English, Pair with phone, Yes, then the advertising burst); the pressed button lights. Dead time is skipped; the clock shows the real simulated time. `./run.sh` regenerates it (`scripts/demo_gif.py`).
+From t = 0: the display is dark for the first 55 s while the firmware sets up the MAX17048 fuel gauge and MAX20303 PMIC over I2C (writes only; it never reads VCELL or SOC), then formats the 32 MiB QuadSPI NOR (erase and program, one line per 4 s of simulated time) and probes the sensor hub (PTA27 reset). The display first draws at 55.4 s. Left: the display pixels the firmware clocks out (language screen, English, Pair with phone, Yes, then the advertising burst); the pressed button lights. Dead time is skipped; the clock shows the real simulated time. `./run.sh` regenerates it (`scripts/demo_gif.py`).
 
 ```sh
 ./run.sh    # downloads Garmin's v3.10 firmware, runs 80 virtual s (about 90 s wall), writes PNG frames to out/frames/
