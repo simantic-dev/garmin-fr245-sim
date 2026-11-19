@@ -1,5 +1,10 @@
 ## Run Garmin Forerunner 245 firmware in a simulator
 
+![Garmin FR245 boot and use, with the firmware's UART traffic and BLE packets](docs/screens/demo.gif)
+
+Stock Garmin firmware, unmodified; right panel = the firmware's real UART traffic and the BLE packets it caused, same simulated clock.
+Left: the display pixels the firmware clocks out (boot logo, language screen, English, Pair with phone, Yes, then the advertising burst); the pressed button lights. Dead time is skipped; the clock shows the real simulated time. `./run.sh` regenerates it (`scripts/demo_gif.py`).
+
 ```sh
 ./run.sh    # downloads Garmin's v3.10 firmware, runs 80 virtual s (about 90 s wall), writes PNG frames to out/frames/
 ```
@@ -98,6 +103,37 @@ Stand-ins:
 - The unit id in the manufacturer data is the firmware's ff ff ff ff.
 
 Open: a scanning/connecting central, and whether the Initializing screen leaves.
+
+## What is independently verified
+
+| Claim | Source | Result |
+| --- | --- | --- |
+| Company ID 0x0087 = Garmin International | Bluetooth SIG `company_identifiers.yaml` | match |
+| UUID 0xFE1F = Garmin International | Bluetooth SIG `member_uuids.yaml` | match |
+| K28, CYW20719 and MAX20303 chips | [iFixit FR245 Music teardown](https://www.ifixit.com/Teardown/Garmin+Forerunner+245+Music+Teardown/150396) | match, Music variant |
+| LPUART3 framing: DLE / id / size / data / checksum / DLE ETX, two's-complement checksum | [pygarmin physical protocol](https://pygarmin.readthedocs.io/en/stable/physical_protocol.html) | framing matches, packet meaning unknown |
+| GATT UUIDs the firmware registers (below) | [Gadgetbridge Garmin protocol](https://www.gadgetbridge.org/internals/specifics/garmin-protocol) | match, see below |
+| Adv byte layout, timing, GATT handles, first-boot UI | simulation only | not verified against a watch |
+
+### Service and characteristic UUIDs, firmware vs Gadgetbridge
+
+From one run's radio log (K28 to CYW commands 0x37 add service, 0x29 add GATT service, 0x2b add characteristic). The 0x37 commands carry the full 16 bytes (little endian). 0x29 and 0x2b carry a 16-bit id plus a base index; the base `6a4e____-667b-11e3-949a-0800200c9a66` is inferred from the 0x37 entry `6a4e3e10-...`, which uses the same base, so for those the 16-bit id is what was compared.
+
+| UUID registered by the firmware | Gadgetbridge list | Result |
+| --- | --- | --- |
+| 6a4e2800-667b-11e3-949a-0800200c9a66 (service) | 6a4e2800 | match |
+| 6a4e8022-667b-11e3-949a-0800200c9a66 (service) | 6a4e8022 | match |
+| chars 6a4e2803, 2810, 2820, 2811, 2821, 2812, 2822 (all under service 2800) | same seven | match (7 of 7) |
+| chars 6a4e4c80, 6a4ecd28 | same two | match |
+| service 6a4e2500 with chars 2501, 2502, 2503, 2505 | not listed | in firmware only |
+| 6a4e3e10-667b-11e3-949a-0800200c9a66 (0x37) | not listed | in firmware only |
+| eight 0x37 UUIDs on other bases: 7905f431-b5ce-4e99-a40f-4b1e122d00d0, 9fbf120d-6301-42d9-8c58-25e699a21dbd, 69d1d8f3-45e1-49a8-9821-9bbdfdaad9d9, 22eac6e9-24d6-4bb5-be44-b36ace7c7bfb, 89d3502b-0f36-433a-8ef4-c502ad55f8dc, 9b3c81d8-57b1-4a8a-b8df-0e56f7ca51c2, 2f7cabce-808d-411f-9a0c-bb92ba96c102, c6b2f38c-23ab-46d8-a6ab-a3a870bbd5d7 | not Garmin's; these look like Apple's ANCS and AMS service and characteristic UUIDs (recalled from Apple's public documentation, not re-checked here) | not in Gadgetbridge's Garmin list, unverified |
+
+No mismatches: every UUID on Gadgetbridge's list is registered by the firmware.
+
+### How to check on a real watch
+
+Put a Forerunner 245 (Music) in pairing mode and scan with nRF Connect. The advertisement should show flags 0x06, the 16-bit service 0xFE1F, manufacturer data with company 0x0087 and a name starting "Forerunner". Compare each field with the first packets in `docs/ble.pcap` (open it in Wireshark, or `python3 scripts/ble_phone.py docs/ble.pcap`). Fields that differ (address, interval, unit id, shortened name) are simulation stand-ins listed under Stand-ins above.
 
 ## Known gaps
 

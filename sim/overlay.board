@@ -24,7 +24,7 @@ portd:
     pullUps: "1 10"
 btn: Scripted.ScriptedGpioPeer @ none
     file: "peers/gpio/pin_script.py"
-    config: "{\"events\": [{\"at_ms\": 75000, \"line\": 1, \"level\": 0}, {\"at_ms\": 75300, \"line\": 1, \"level\": 1}, {\"at_ms\": 80000, \"line\": 1, \"level\": 0}, {\"at_ms\": 80300, \"line\": 1, \"level\": 1}]}"
+    config: "{\"events\": [{\"at_ms\": 68000, \"line\": 1, \"level\": 0}, {\"at_ms\": 68300, \"line\": 1, \"level\": 1}, {\"at_ms\": 71000, \"line\": 2, \"level\": 0}, {\"at_ms\": 71300, \"line\": 2, \"level\": 1}, {\"at_ms\": 75000, \"line\": 1, \"level\": 0}, {\"at_ms\": 75300, \"line\": 1, \"level\": 1}, {\"at_ms\": 80000, \"line\": 1, \"level\": 0}, {\"at_ms\": 80300, \"line\": 1, \"level\": 1}]}"
     numberOfGpios: 5
     0 -> gpioc@11
     1 -> gpiod@10

@@ -47,7 +47,7 @@ class Peer:
             return
         pid, data = body[0], body[2:-1]
         if self.log:
-            self.ctx.info(f"garmin-link rx id={pid:#04x} data={data.hex()}")
+            self.ctx.info(f"garmin-link rx t={self.ctx.now_us / 1e6:.4f} id={pid:#04x} data={data.hex()}")
         mode = self.mode
         if mode == "ack" and pid not in (0x06, 0x15):
             self.ctx.send(frame(0x06, bytes([pid])))

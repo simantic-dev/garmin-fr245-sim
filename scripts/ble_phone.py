@@ -42,25 +42,38 @@ def describe(ad):
 
 
 CH = {0: 37, 12: 38, 39: 39}
-seen = []  # (time, line)
-for ts, rec in records(sys.argv[1]):
-    if rec[4:8] != bytes.fromhex("d6be898e"):
-        continue
-    coff = 14  # rf channel, 3 power/noise bytes, AA, flags, AA, then the PDU
-    h, n = rec[coff], rec[coff + 1]
-    if h & 15 not in (0, 4):
-        continue
-    adv_a = ":".join(f"{b:02X}" for b in rec[coff + 2:coff + 8][::-1])
-    seen.append((ts, f"ch{CH.get(rec[0], rec[0])} {PDU[h & 15]:8} {adv_a}  {describe(rec[coff + 8:coff + 2 + n])}"))
 
-if "--all" in sys.argv:
-    for ts, line in seen:
-        print(f"[{ts:9.4f}s] {line}")
-else:
-    # One line per advertising window (gap over 1 s starts a new one), with its first advertisement.
-    for k, (ts, line) in enumerate(seen):
-        if k == 0 or ts - seen[k - 1][0] > 1:
-            start = k
+
+def scan(path):
+    """Every ADV_IND/SCAN_RSP in the pcap: (time, channel, pdu name, advertiser address, AdvData bytes)."""
+    out = []
+    for ts, rec in records(path):
+        if rec[4:8] != bytes.fromhex("d6be898e"):
+            continue
+        coff = 14  # rf channel, 3 power/noise bytes, AA, flags, AA, then the PDU
+        h, n = rec[coff], rec[coff + 1]
+        if h & 15 not in (0, 4):
+            continue
+        adv_a = ":".join(f"{b:02X}" for b in rec[coff + 2:coff + 8][::-1])
+        out.append((ts, CH.get(rec[0], rec[0]), PDU[h & 15], adv_a, rec[coff + 8:coff + 2 + n]))
+    return out
+
+
+def main():
+    seen = [(ts, f"ch{ch} {pdu:8} {a}  {describe(ad)}") for ts, ch, pdu, a, ad in scan(sys.argv[1])]
+
+    if "--all" in sys.argv:
+        for ts, line in seen:
             print(f"[{ts:9.4f}s] {line}")
-        if k + 1 == len(seen) or seen[k + 1][0] - ts > 1:
-            print(f"   ... until {ts:.4f}s: {k - start + 1} advertisements")
+    else:
+        # One line per advertising window (gap over 1 s starts a new one), with its first advertisement.
+        for k, (ts, line) in enumerate(seen):
+            if k == 0 or ts - seen[k - 1][0] > 1:
+                start = k
+                print(f"[{ts:9.4f}s] {line}")
+            if k + 1 == len(seen) or seen[k + 1][0] - ts > 1:
+                print(f"   ... until {ts:.4f}s: {k - start + 1} advertisements")
+
+
+if __name__ == "__main__":
+    main()

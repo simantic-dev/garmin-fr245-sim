@@ -6,6 +6,7 @@ cd "$(dirname "$0")"
 SIM="${SIM:-sim}"
 [ -f out/fr245.elf ] || python3 scripts/garmin_fr245_image.py out
 rm -rf out/frames && mkdir -p out/frames
-"$SIM" run --scenario sim/scenario.yaml
+"$SIM" run --scenario sim/scenario.yaml 2>&1 | tee out/run.log
 ls out/frames | wc -l | xargs echo "frames written to out/frames:"
 python3 scripts/ble_phone.py out/ble.pcap
+python3 scripts/demo_gif.py docs/screens/demo.gif

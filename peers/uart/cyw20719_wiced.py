@@ -55,9 +55,13 @@ class Peer:
         self.name = b""
         self.adv_on = False
 
+    def _send(self, data):
+        self.ctx.info(f"cyw tx t={self.ctx.now_us / 1e6:.4f} {data.hex()}")
+        self.ctx.send(data)
+
     def on_rx_enable(self):
-        self.ctx.send(frame(0x1B4A))
-        self.ctx.send(frame(STACK_UP_OPCODE, STACK_UP_MSG))
+        self._send(frame(0x1B4A))
+        self._send(frame(STACK_UP_OPCODE, STACK_UP_MSG))
 
     def advertise(self, cfg):
         """The 400-byte 0x08 config (offsets read off its builder 0x2233c0): [399] mode, [40] UUID count, [42..] the
@@ -91,7 +95,7 @@ class Peer:
     def on_byte(self, b):
         f = self.parser.feed(b)
         if f:
-            self.ctx.info(f"cyw rx opcode={f[0]:#06x} payload={f[1].hex()}")
+            self.ctx.info(f"cyw rx t={self.ctx.now_us / 1e6:.4f} opcode={f[0]:#06x} payload={f[1].hex()}")
             if f[0] == 0x1982 and f[1][:1] == b"\x16" and len(f[1]) >= 12:
                 # Set device name: [6..7] length, name bytes from [12] (0x2233c0's neighbour; "Forerunner 245").
                 self.name = f[1][12:12 + (f[1][6] | f[1][7] << 8)]
@@ -108,7 +112,7 @@ class Peer:
                 msg[4] = 0x37
                 msg[9] = 0x10 + self.handle
                 msg[10:26] = f[1][4:20]
-                self.ctx.send(frame(0x1983, msg))
+                self._send(frame(0x1983, msg))
             if f[0] == 0x1982 and f[1][:1] in (b"\x16", b"\x12", b"\x14", b"\x08") or (
                     f[0] == 0x1982 and f[1][:1] not in (b"\x37", b"\x42", b"\x01")):
                 # Generic status-ok event: [3] app id, [4] = the command byte (pending op for 0x16, 0x12, 0x14, 8 per
@@ -121,7 +125,7 @@ class Peer:
                 self.handle += 1
                 msg[9] = self.handle
                 msg[10] = 1
-                self.ctx.send(frame(0x1983, msg))
+                self._send(frame(0x1983, msg))
             if f[0] == 0x1982 and f[1][:1] == b"\x42":
                 # Second host command (42 <app id> 05 00 06). The step machine 0x223bd0 sets its pending-op byte
                 # 0x1fffe971 to 6 (0x223c00) and its response handler 0x223578 (case 6 -> 0x223622) advances to the next step on an
@@ -131,7 +135,7 @@ class Peer:
                 msg = bytearray(16)
                 msg[3] = f[1][1]  # app id: 0x2261ac drops events whose [3] differs from the id in 0x1fffe986
                 msg[4] = 6
-                self.ctx.send(frame(0x1983, msg))
+                self._send(frame(0x1983, msg))
             if f[0] == 0x1982 and len(f[1]) >= 7 and f[1][:1] == b"\x01":
                 # The host registered an app (0x1982: [4..6] = tag). Its handler 0x2261ac, run from opcode 0x1983
                 # via 0x31614/0x30e44, takes [4]==1 as the registration reply, needs [10..12] equal to the tag
@@ -143,4 +147,4 @@ class Peer:
                 msg[4] = 1
                 msg[9] = 1
                 msg[10:13] = f[1][4:7]
-                self.ctx.send(frame(0x1983, msg))
+                self._send(frame(0x1983, msg))

@@ -34,17 +34,18 @@ def watch(frame, pressed=None):
     im.alpha_composite(sc, (CX - 150, CY - 150))
     return im.convert("RGB")
 
-fs = sorted(glob.glob(f"{FR}/*.png"))
-t = [int(re.search(r"_(\d+)ms", f).group(1)) / 1000 for f in fs]
-load = lambda i: Image.open(fs[i])
-os.makedirs(OUT, exist_ok=True)
-for name, i in [("1-boot-logo-4.8s", 0), ("2-language-12.9s", 2), ("3-scrolled-after-PTD10", 15),
-                ("4-back-after-PTD1", 23), ("5-redraw-after-PTA20", 27)]:
-    circle(load(i), 240).save(f"{OUT}/{name}.png")
-watch(load(2)).save(f"{OUT}/hero.png")
-seq, durs = [], []
-for i in range(24):  # boot .. back after PTD1
-    p = next((n for n, s in PRESS.items() if s <= t[i] < s + 0.3), None)
-    seq.append(watch(load(i), p).quantize(64))
-    durs.append(int(min(max(((t[i + 1] if i < 23 else t[i] + 1.5) - t[i]) * 150, 80), 900)))
-seq[0].save(f"{OUT}/hero.gif", save_all=True, append_images=seq[1:], duration=durs, loop=0, optimize=True)
+if __name__ == "__main__":
+    fs = sorted(glob.glob(f"{FR}/*.png"))
+    t = [int(re.search(r"_(\d+)ms", f).group(1)) / 1000 for f in fs]
+    load = lambda i: Image.open(fs[i])
+    os.makedirs(OUT, exist_ok=True)
+    for name, i in [("1-boot-logo-4.8s", 0), ("2-language-12.9s", 2), ("3-scrolled-after-PTD10", 15),
+                    ("4-back-after-PTD1", 23), ("5-redraw-after-PTA20", 27)]:
+        circle(load(i), 240).save(f"{OUT}/{name}.png")
+    watch(load(2)).save(f"{OUT}/hero.png")
+    seq, durs = [], []
+    for i in range(24):  # boot .. back after PTD1
+        p = next((n for n, s in PRESS.items() if s <= t[i] < s + 0.3), None)
+        seq.append(watch(load(i), p).quantize(64))
+        durs.append(int(min(max(((t[i + 1] if i < 23 else t[i] + 1.5) - t[i]) * 150, 80), 900)))
+    seq[0].save(f"{OUT}/hero.gif", save_all=True, append_images=seq[1:], duration=durs, loop=0, optimize=True)
