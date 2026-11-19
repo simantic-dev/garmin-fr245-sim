@@ -52,14 +52,24 @@ screen answers PTD10 at 75 s: [English selected](docs/screens/6-english-selected
 [Pair with phone? Yes / No](docs/screens/7-pair-with-phone-75s.png). The scenario runs 80 s virtual (about 90 s wall).
 On the pair screen PTD10 selects the highlighted entry (a second press at 80 s moves to an "Initializing" screen, [frame](docs/screens/8-initializing-after-yes-95s.png)); PTA20 moves the highlight Yes to No.
 
-## Bluetooth (not yet advertising)
+## Bluetooth (GATT table built, advertising config sent; no BLE medium bridge yet)
 
-The radio is a CYW20719 on LPUART0 (reset PTA26). Measured on v3.10: the firmware enables LPUART0 at about 55.4 s, so
-bytes the peer sent at 5 s were dropped; `cyw20719_wiced.py` now repeats the gate-opening frame (opcode 0x1b4a) once a
-second until the host sends a byte (MODELED SIMPLIFICATION, no radio-ready event exists). It is accepted from 56 s
-(flag 0x20010079 set at 56.0 s), but after "Yes" the firmware sent no byte on LPUART0 through 95 s: the radio send path
-(0xbe074) and the BLE enable routine (0x2262c4) were never reached, so there are no host frames to decode yet and no
-advertising data. Open: which event the "Initializing" screen waits for. No BLE medium bridge exists yet.
+The radio is a CYW20719 on LPUART0 (reset PTA26). With `cyw20719_wiced.py` the firmware (v3.10) completes BLE init: register
+app, 0x42, nine 0x37 add-service, 0x16 name "Forerunner 245", 0x12, 0x14, 0x08, then the GATT table build from the 14-entry
+table in the image (0x29 add service, 0x2b add characteristic). Replies need a non-zero u16 handle at event bytes [9..10], or
+the table builder sends nothing more. After that the BLE manager idles waiting for a connection (its 1 Hz routine sees
+connection handle 0xffff).
+
+The firmware sends no "set advertising data" or "enable advertising" command. Advertising is one 400-byte configuration
+command (opcode byte 0x08, built at flat address 0x2233c0; mode 0 = off, mode 1 = on) that the radio turns into advertising.
+Mode 1 carries flags 0x06, a 16-bit service list with 0xFE1F (Garmin) and manufacturer data (company 0x0087, then
+07 00 0c 04 01 and a 4-byte unit id, ff ff ff ff here); the name comes from the earlier 0x16 command. Mode 1 is sent at
+60.5 s and 80.0 s, mode 0 at 63.5 s (cause not yet found).
+
+Open: a BLE medium bridge (nothing hands a Python UART peer's frames to a link-layer radio, and the engine has no scripted
+central that scans or connects), a phone scan line, and whether the Initializing screen leaves. The 0x1b4a gate frame and
+the 0x24 stack-enabled event are still timer-driven (MODELED SIMPLIFICATION): the engine does not tell a peer that the DUT
+enabled LPUART0 RX (about 55.4 s). The LPUART knows (`CTRL_RE`), so a flag on the peer's RxLine would remove both timers.
 
 ## Known gaps
 
