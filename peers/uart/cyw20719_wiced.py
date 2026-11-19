@@ -8,6 +8,8 @@
 # Garmin's own opcodes exist here, so there is no reset/patch/version handling. The peer speaks when the DUT's
 # LPUART0 receiver turns on (`on_rx_enable`, CTRL[RE]), not on timers. Advertising is bridged to the sim's BLE
 # medium (`ctx.ble_*`): the 0x08 config command is parsed and put on the air by the sim's link layer.
+import os
+
 HEADER = 0x19
 # "Stack enabled" event. Read off the firmware, v3.10: the radio-event task (0xd18b0) hands opcodes 0x1984..0x1986
 # to 0x31614, which forwards the payload as a message to 0x30f00. A message whose byte 0 is 0x24 sets the
@@ -54,6 +56,22 @@ class Peer:
         self.handle = 0
         self.name = b""
         self.adv_on = False
+        self.next_gatt = 0x20  # next free attribute handle for the 0x29/0x2b GATT table
+        self.svc = 0
+        self.chars = {}  # uuid16 -> (value handle, cccd handle)
+        self.steps = []
+        t = os.environ.get("CYW_PHONE_CONNECT_S")
+        if t:
+            self.steps = phone_script(float(t))
+            ctx.schedule_oneshot(int(self.steps[0][0] * 1e6))
+
+    def on_timer(self):
+        while self.steps and self.steps[0][0] * 1e6 <= self.ctx.now_us + 1:
+            _, label, fn = self.steps.pop(0)
+            self.ctx.info(f"cyw phone t={self.ctx.now_us / 1e6:.4f} {label}")
+            fn(self)
+        if self.steps:
+            self.ctx.schedule_oneshot(max(1, int(self.steps[0][0] * 1e6 - self.ctx.now_us)))
 
     def _send(self, data):
         self.ctx.info(f"cyw tx t={self.ctx.now_us / 1e6:.4f} {data.hex()}")
@@ -92,6 +110,36 @@ class Peer:
         self.adv_on = True
         self.ctx.info(f"cyw adv on t={self.ctx.now_us / 1e6:.3f}s ad={ad.hex()}")
 
+    def gatt_reply(self, cmd):
+        """0x29 add service (29 <app> 09 00 <uuid16 LE> ..) and 0x2b add characteristic (2b <app> 68 00 <props> .. [10..11]
+        max length, [12..13] uuid16 LE). Reply layout read off the table stores 0x227c1c/0x227bdc (0x29) and 0x228acc (0x2b),
+        which compare against the 0x29 reply: event[9..10] = handle, [11..12] = uuid16 for a service; for a characteristic
+        event[9..10] = value handle, [13..14] = CCCD handle, [17..18] = uuid16, [21..22] = the service's handle.
+        MODELED SIMPLIFICATION: handles are numbered per service as declaration, value, CCCD from 0x20; the real values,
+        and the bytes at event [11..12], [15..16], [19..20], are not known (zero)."""
+        msg = bytearray(32)
+        msg[3] = cmd[1]
+        msg[4] = cmd[0]
+        if cmd[0] == 0x29:
+            uuid = cmd[4] | cmd[5] << 8
+            self.svc = self.next_gatt
+            self.next_gatt += 1
+            msg[9:11] = self.svc.to_bytes(2, "little")
+            msg[11:13] = uuid.to_bytes(2, "little")
+        else:
+            uuid = cmd[12] | cmd[13] << 8
+            value, cccd = self.next_gatt + 1, self.next_gatt + 2
+            self.next_gatt += 3
+            self.chars[uuid] = (value, cccd)
+            msg[9:11] = value.to_bytes(2, "little")
+            msg[13:15] = cccd.to_bytes(2, "little")
+            msg[17:19] = uuid.to_bytes(2, "little")
+            msg[21:23] = self.svc.to_bytes(2, "little")
+        self._send(frame(0x1983, msg))
+
+    def event(self, msg):
+        self._send(frame(0x1984, msg))
+
     def on_byte(self, b):
         f = self.parser.feed(b)
         if f:
@@ -113,8 +161,10 @@ class Peer:
                 msg[9] = 0x10 + self.handle
                 msg[10:26] = f[1][4:20]
                 self._send(frame(0x1983, msg))
-            if f[0] == 0x1982 and f[1][:1] in (b"\x16", b"\x12", b"\x14", b"\x08") or (
-                    f[0] == 0x1982 and f[1][:1] not in (b"\x37", b"\x42", b"\x01")):
+            if f[0] == 0x1982 and f[1][:1] in (b"\x29", b"\x2b") and len(f[1]) >= 6:
+                self.gatt_reply(f[1])
+            elif f[0] == 0x1982 and f[1][:1] in (b"\x16", b"\x12", b"\x14", b"\x08") or (
+                    f[0] == 0x1982 and f[1][:1] not in (b"\x37", b"\x42", b"\x01", b"\x29", b"\x2b", b"\x2e", b"\x0f")):
                 # Generic status-ok event: [3] app id, [4] = the command byte (pending op for 0x16, 0x12, 0x14, 8 per
                 # 0x223578 case 0x223622). For 0x29, 0x2b, 0x2f (GATT table build, response handler 0x2250a0) the
                 # firmware needs a non-zero u16 at [9..10]: 0x2253d0 sends nothing more while 0x1fffe888 is 0.
@@ -148,3 +198,51 @@ class Peer:
                 msg[9] = 1
                 msg[10:13] = f[1][4:7]
                 self._send(frame(0x1983, msg))
+
+
+# Scripted phone (CYW_PHONE_CONNECT_S=<seconds>): radio-to-K28 events, layouts read off the BLE manager (v3.10).
+CONN = 0x0040  # MODELED SIMPLIFICATION: the radio's real connection handle numbering is unknown
+
+
+def connected(p, addr=bytes.fromhex("11 22 33 44 55 66"), atype=0):
+    """Event type 1 (handler 0x226588 case 1, 0x226684): [1..2] handle, [5..12] 8 bytes passed on (connection
+    parameters, inferred), [13..19] peer address (6 bytes + type byte; order inferred), [20] == 1 means connected."""
+    m = bytearray(21)
+    m[0] = 1
+    m[1:3] = CONN.to_bytes(2, "little")
+    m[3:5] = (16).to_bytes(2, "little")
+    m[5:13] = bytes.fromhex("18 00 00 00 48 00 00 00")  # interval 0x18, latency 0, timeout 0x48 (inferred, unused)
+    m[13:19] = addr
+    m[19] = atype
+    m[20] = 1
+    p.event(m)
+
+
+def gatt_write(p, handle, data):
+    """Event type 0x1d (0x31570 fixup, handlers 0x2287c4 / 0x227a38): [1..2] connection handle, [3..4] = 16 (fixed
+    part), [9..10] attribute handle, [13..14] data length, [17..20] data pointer slot (the firmware's 0x31498 rewrites it
+    to the data at offset 21)."""
+    m = bytearray(21) + bytes(data)
+    m[0] = 0x1D
+    m[1:3] = CONN.to_bytes(2, "little")
+    m[3:5] = (16).to_bytes(2, "little")
+    m[9:11] = handle.to_bytes(2, "little")
+    m[13:15] = len(data).to_bytes(2, "little")
+    p.event(m)
+
+
+def cccd_on(uuid):
+    return lambda p: gatt_write(p, p.chars[uuid][1], b"\x01\x00")
+
+
+def ml_register(p, service=1):
+    """Garmin multi-link (V2) management request written to the write characteristic 6a4e2820 (Gadgetbridge notes): ML
+    handle 0 (management), command 0 = register, 8-byte service id (1 = GFDI), reliable flag. The firmware's parser
+    (0x2287c4, branch for first byte 0) takes 11 bytes."""
+    gatt_write(p, p.chars[0x2820][0], bytes([0, 0]) + service.to_bytes(8, "little") + b"\x00")
+
+
+def phone_script(t0):
+    return [(t0, "connected", connected),
+            (t0 + 0.3, "CCCD on 6a4e2810", cccd_on(0x2810)),
+            (t0 + 0.6, "ML register GFDI", ml_register)]

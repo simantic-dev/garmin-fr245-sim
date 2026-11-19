@@ -171,6 +171,40 @@ Open: a scanning/connecting central, and whether the Initializing screen leaves.
 | GATT UUIDs the firmware registers (below) | [Gadgetbridge Garmin protocol](https://www.gadgetbridge.org/internals/specifics/garmin-protocol) | match, see below |
 | Adv byte layout, timing, GATT handles, first-boot UI | simulation only | not verified against a watch |
 
+### Scripted phone connection (design note)
+
+`CYW_PHONE_CONNECT_S=12 ./run.sh` makes the radio peer send, at that virtual time, a connected event, a CCCD enable on
+6a4e2810 and a multi-link register request. Formats below are read off the BLE manager (v3.10) by static analysis; every
+meaning marked (inferred) is a MODELED SIMPLIFICATION. Radio to K28 events travel as opcode 0x1984 (0x1985, 0x1986) with a
+message whose byte 0 is the type; 0x30f00 hands it to every callback registered through 0x30e7c, the BLE host's being 0x226588.
+Responses to host commands travel as opcode 0x1983 (callback 0x2261ac).
+
+| Type | Handler | Layout | Effect |
+| --- | --- | --- | --- |
+| 0x24 | 0x226588 | empty | stack up (already sent) |
+| 1 | 0x226588 case 1, 0x226684, 0x227a38 | [1..2] handle, [3..4]=16, [13..19] peer address (order inferred), [20]==1 connected | stores the handle at 0x1ffe7a4c (idles 0xffff), copies the address, posts UI message 0x15, the firmware then sends host commands 0x0f, 0x0a, 0x2e |
+| 2 | 0x226588 case 2 | [1..2] handle, [5] reason | clears the handle to 0xffff, posts message 0x16 |
+| 3 | 0x2230a8, 0x223f44 | [1..2] handle, [5..12] 8 bytes (connection parameters, inferred) | posts message 0x20 |
+| 0xd | 0x2230a8 | [1..2] handle, [5] value | posts message 0x11 (link status, inferred) |
+| 0x1d | 0x31570 fix-up, 0x2287c4, 0x227a38, 0x225318 | [1..2] handle, [3..4]=16, [9..10] attribute handle, [13..14] length, [17..20] pointer slot, data at [21..] | GATT write: CCCD (length 2) or data |
+| 4, 5, 6, 0xa, 0xb, 0x26 | 0x227334 | [1..2] handle | security and pairing events, layouts not decoded |
+| 0xc, 0x12, 0x14, 0x15, 0x17, 0x19 to 0x1b, 0x21, 0x25 | 0x223b78, 0x223f44, 0x225318 | not decoded | |
+
+GATT replies: 0x29 reply [9..10] service handle, [11..12] uuid16; 0x2b reply [9..10] value handle, [13..14] CCCD handle,
+[17..18] uuid16, [21..22] service handle (the tables 0x227bdc and 0x228acc compare these). Replying to host commands 0x0f and
+0x2e with the generic echo makes the firmware reset 0.4 ms later (fatal handler 0xd2910), so the peer stays silent for them.
+
+Result (12.0 s, no bonding needed to get this far): the connection handle 0x1ffe7a4c goes 0xffff to 0x0040 at 12.000112 s
+(pc 0x22669c). The firmware at once sends 0x0f (handle 0x40, interval 0x18-0x24, timeout 0x190), 0x0a, and 0x2e (notify on
+attribute 0x36 = 6a4e2803, 4 bytes by pointer). After the register request it sends 0x2f (notify on attribute 0x39 =
+6a4e2810, 13 bytes) and 0x10. The data is passed as a RAM pointer, so the peer cannot yet read the GFDI bytes. The UI did not
+change (same frames as without a phone).
+
+Next round, a phone doing Gadgetbridge's GFDI handshake needs: the air link (connection, MTU, encryption), the RAM data
+behind 0x2e/0x2f (read it from the pointer or from the HCI payload), notifications on 2810 and writes on 2820 carrying ML
+handles, then GFDI (device information, configuration, system event) with CRC-16, and a bond, since the firmware
+may only move its UI on after pairing events (types 4 to 6, not tested).
+
 ### Service and characteristic UUIDs, firmware vs Gadgetbridge
 
 From one run's radio log (K28 to CYW commands 0x37 add service, 0x29 add GATT service, 0x2b add characteristic). The 0x37 commands carry the full 16 bytes (little endian). 0x29 and 0x2b carry a 16-bit id plus a base index; the base `6a4e____-667b-11e3-949a-0800200c9a66` is inferred from the 0x37 entry `6a4e3e10-...`, which uses the same base, so for those the 16-bit id is what was compared.
