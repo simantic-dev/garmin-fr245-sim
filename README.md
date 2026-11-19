@@ -4,6 +4,8 @@
 
 Stock Garmin firmware, unmodified, booted from a formatted ("factory") flash. Left: the display pixels the firmware clocks out, with the pressed button lit. Right: the firmware's real traffic on the same simulated clock: I2C writes to the MAX17048 fuel gauge and MAX20303 PMIC, the sensor hub SPI messages (summarised, e.g. `hub>K28 accel batch 25 samples z=+1.00 g`), the radio UART, the GPS UART handshake, BLE adverts on the simulated air (one row per second) and the button presses. GPS is parked (see below). Dead time is skipped; the clock shows the real simulated time. A person's pace is scripted in `sim/overlay.board` (`btn`: one press every 2.5 s). `./run.sh` regenerates it (`scripts/demo_gif.py`).
 
+Under the traffic view, an IRQ panel shows the eight most active interrupts of the last 0.5 s (bars on a log scale, entries per second, named from the chip's NVIC wiring) and the total IRQ/s over the run with a cursor at the current time. It is captured in the same scenario run as the frames: `run.sh` passes `--trace-interrupts` and `scripts/irq_bins.py` aggregates it live into 100 ms bins per IRQ number, so the ~1 GB raw trace is never written. The bin table (`out/irq_rates.json`, git-ignored) is only an input for the GIF; `IRQ=0 ./run.sh` leaves the panel out.
+
 Built with pyrite commit `5f59b385874894cb237ff0fc13b0569dd0f3a9c3` (core clock 120 MHz).
 
 ```sh
