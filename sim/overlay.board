@@ -49,3 +49,6 @@ flexio0:
 link: UART.ScriptedUartPeer @ sysbus 0x60200000
     file: "peers/uart/garmin_link_peer.py"
     baudRate: 115200
+cyw: UART.ScriptedUartPeer @ sysbus 0x60200100
+    file: "peers/uart/cyw20719_wiced.py"
+    baudRate: 3000000
