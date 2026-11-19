@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Headline GIF: the round watch (display frames, pressed button lit) next to the firmware's real traffic, one simulated clock.
 Reads one scenario run: out/frames/*.png, out/run.log (peers log with timestamps), out/ble.pcap, sim/overlay.board (button script).
-Usage: ./run.sh > out/run.log   (or: sim run --scenario sim/scenario.yaml > out/run.log), then python3 scripts/demo_gif.py [out_gif]
+Usage: ./run.sh > out/run.log   (or: sim run --scenario sim/scenario.yaml > out/run.log), then python3 scripts/demo_gif.py [out_gif [mp4]]
+With `mp4` it also writes <out>.mp4 (1920x1080) and <out>_vertical.mp4 (1080x1920) with ffmpeg, HD watch body, same ticks at 30 fps.
 Starts at t = 0 (the display is dark until the firmware first draws). Dead time is skipped: a GIF frame is made when the display changes, a button moves or traffic arrives; the clock shows the real time.
 Under it an IRQ panel: the top 8 interrupts in the trailing 0.5 s (bars, log scale, rate per second) and the total IRQ/s over the run with a cursor.
 Reads out/irq_rates.json (made by run.sh from --trace-interrupts, binned at 100 ms; a temporary input, not kept). Without it the panel is left out.
@@ -9,16 +10,18 @@ Rows: I2C writes (one per 0.25 s), sensor hub SPI messages, radio UART, GPS UART
 import glob, json, math, os, re, sys
 from PIL import Image, ImageDraw, ImageFont
 sys.path.insert(0, os.path.dirname(__file__))
+import watch_render
 from watch_render import BUTTONS, watch
 from ble_phone import scan, ad_fields
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "docs/screens/demo.gif"
-W, H, WATCH_W, ROWS = 900, 500, 320, 13
+W, H, WATCH_W, ROWS = 900, 500, 320, 13  # design units of the traffic view: x 0..W, y 0..H; IRQ panel below it
 PH = 170  # IRQ panel height under the traffic view
 WIN = 0.5  # seconds of trailing window for the bar rates
 COL = {"uart": (110, 200, 255), "gps": (255, 214, 102), "air": (120, 230, 140), "btn": (255, 150, 40),
        "i2c": (255, 120, 190), "hub": (190, 150, 255)}
 BG, FG, DIM = (18, 20, 24), (225, 225, 225), (130, 135, 145)
+NCOL = 128  # GIF palette size (shared)
 GPS_SHOWN_S = 6.0  # the GPS handshake is listed up to here, then one note
 PINS = ["PTC11", "PTD10", "PTD1", "PTA20", "PTA22"]  # overlay.board `btn` lines 0..4
 CMD = {0x01: "register app", 0x42: "init step", 0x16: "set name", 0x12: "cmd", 0x14: "cmd", 0x09: "cmd", 0x0A: "cmd"}
@@ -128,10 +131,10 @@ def irq_name(k):
     return IRQ_NAME.get(k) or IRQ_NAME.get(k.removeprefix("IRQ"), k)
 
 
-def irq_panel(d, irq, t, fnt):
+def irq_panel(d, irq, t, fnt, pw=W):
     bins, n = irq
     y0, x0 = H, 12
-    d.line((0, y0, W, y0), fill=(60, 64, 72))
+    d.line((0, y0, pw, y0), fill=(60, 64, 72))
     lo, hi = max(0, int((t - WIN) * 10)), int(t * 10) + 1
     rate = sorted(((sum(v.get(i, 0) for i in range(lo, hi)) / ((hi - lo) / 10), k) for k, v in bins.items()), reverse=True)[:8]
     rate = [r for r in rate if r[0]]
@@ -141,16 +144,36 @@ def irq_panel(d, irq, t, fnt):
         d.text((x0, y), irq_name(k)[:18], font=fnt, fill=FG)
         d.rectangle((x0 + 150, y + 2, x0 + 150 + 250 * math.log10(1 + v) / 3.5, y + 11), fill=COL["btn"])
         d.text((x0 + 410, y), f"{v:6.0f}", font=fnt, fill=FG)
-    sx, sw, sy, sh = 520, W - 530, y0 + 40, PH - 56
+    sx, sw, sy, sh = 520, pw - 530, y0 + 40, PH - 56
     tot = [sum(v.get(i, 0) for v in bins.values()) * 10 for i in range(n)]  # per 100 ms bin -> per s
     sm = [sum(tot[max(0, i - 2):i + 3]) / len(tot[max(0, i - 2):i + 3]) for i in range(n)]
     top = math.log10(1 + max(sm)) * 1.05
-    d.text((sx, y0 + 6), f"total IRQ/s over the run, log (peak {max(sm):.0f}/s)", font=fnt, fill=DIM)
+    d.text((sx, y0 + 6), f"total IRQ/s, log, peak {max(sm):.0f}", font=fnt, fill=DIM)
     d.rectangle((sx, sy, sx + sw, sy + sh), outline=(60, 64, 72))
     d.line([(sx + sw * i / n, sy + sh - sh * math.log10(1 + sm[i]) / top) for i in range(n)], fill=COL["hub"], width=1)
     cx = sx + sw * min(t * 10, n) / n
     d.line((cx, sy - 4, cx, sy + sh + 4), fill=COL["btn"], width=2)
     d.text((sx, sy + sh + 4), "0 s", font=fnt, fill=DIM); d.text((sx + sw - 42, sy + sh + 4), f"{n / 10:.0f} s", font=fnt, fill=DIM)
+
+
+class UD:
+    """ImageDraw in design units: coordinates and widths x u, shifted by (ox, oy) pixels (HD output draws the same layout at u x)."""
+
+    def __init__(self, d, u=1.0, ox=0, oy=0):
+        self.d, self.u, self.ox, self.oy = d, u, ox, oy
+
+    def p(self, x, y):
+        return (self.ox + x * self.u, self.oy + y * self.u)
+
+    def text(self, xy, s, **k):
+        self.d.text(self.p(*xy), s, **k)
+
+    def rectangle(self, b, width=1, **k):
+        self.d.rectangle(self.p(b[0], b[1]) + self.p(b[2], b[3]), width=max(1, round(width * self.u)), **k)
+
+    def line(self, pts, width=1, **k):
+        pts = [pts[i:i + 2] for i in range(0, len(pts), 2)] if isinstance(pts[0], (int, float)) else pts
+        self.d.line([self.p(*q) for q in pts], width=max(1, round(width * self.u)), **k)
 
 
 def font(sz):
@@ -160,71 +183,112 @@ def font(sz):
     return ImageFont.load_default(sz)
 
 
+def ticks_for(ev, presses, ft, irq):
+    """Candidate ticks: display frames, events, button edges; one per 0.35 s of simulated time, plus every button edge."""
+    t1 = ft[-1] + 0.2
+    edges = {p for p, _ in presses} | {p + 0.3 for p, _ in presses}
+    cand = sorted({t for t, _, _ in ev if 0 <= t <= t1} | set(ft) | edges | {0.0} | ({float(x) for x in range(0, int(t1), 2)} if irq else set()))
+    ticks, last = [], -9
+    for t in cand:
+        if t - last >= 0.35 or t in edges:
+            ticks.append(t); last = t
+    return ticks, t1
+
+
+def panel(d, u, x0, pw, t, shown, irq):
+    """The traffic view and IRQ panel in design units on UD d: text starts at x0, right edge pw."""
+    fnt, big = font(round(12 * u)), font(round(17 * u))
+    d.text((x0, 10), f"t = {t:.2f} s (simulated)", font=big, fill=FG)
+    d.text((x0, 34), "stock Garmin FR245 firmware: I2C, sensor hub SPI, UARTs, BLE", font=fnt, fill=DIM)
+    d.line((x0, 54, pw - 8, 54), fill=(60, 64, 72))
+    for i, (t_e, k, text) in enumerate(shown[-ROWS:]):
+        y = 62 + i * 29
+        newest = i == len(shown[-ROWS:]) - 1
+        if newest:
+            d.rectangle((x0 - 4, y - 3, pw - 6, y + 25), fill=(44, 50, 62))
+        d.text((x0, y), f"{t_e:7.3f}s", font=fnt, fill=DIM)
+        d.text((x0 + 62, y), text[:68], font=fnt, fill=COL[k])
+        if newest:
+            d.rectangle((x0 - 4, y - 3, x0 - 1, y + 25), fill=COL[k])
+    if t >= GPS_SHOWN_S:
+        d.text((x0, H - 56), "GPS parked: start is gated on CPE.BIN, no fix is fed (README)", font=fnt, fill=COL["gps"])
+    if t >= 1.2:
+        d.text((x0, H - 42), "MAX17048 fuel gauge: configured by writes, never read", font=fnt, fill=COL["i2c"])
+    lx = x0
+    for k, name in (("i2c", "I2C power"), ("hub", "hub SPI"), ("uart", "radio UART"), ("gps", "GPS UART"), ("air", "BLE air"), ("btn", "button")):
+        d.rectangle((lx, H - 22, lx + 9, H - 13), fill=COL[k]); d.text((lx + 14, H - 24), name, font=fnt, fill=DIM)
+        lx += 14 + 7 * len(name) + 14
+    if irq:
+        irq_panel(d, irq, t, fnt, pw)
+
+
+def ffmpeg(path, size):
+    import subprocess
+    return subprocess.Popen(["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{size[0]}x{size[1]}", "-r", "30", "-i", "-",
+                             "-c:v", "libx264", "-preset", "slow", "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart", path], stdin=subprocess.PIPE)
+
+
 def main():
     ev, presses = events()
     irq = load_irq()
     full = H + (PH if irq else 0)  # the traffic view keeps its size; the panel is added below it
     fs = sorted(glob.glob("out/frames/*.png"))
     ft = [int(re.search(r"_(\d+)ms", f).group(1)) / 1000 for f in fs]
-    t0, t1 = 0.0, ft[-1] + 0.2
-    fnt, big = font(12), font(17)
-    # candidate ticks: display frames, events, button edges; keep one per 0.3 s of simulated time, plus every button edge
-    edges = {p for p, _ in presses} | {p + 0.3 for p, _ in presses}
-    cand = sorted({t for t, _, _ in ev if t0 <= t <= t1} | set(ft) | edges | {0.0} | ({float(x) for x in range(0, int(t1), 2)} if irq else set()))
-    ticks, last = [], -9
-    for t in cand:
-        if t - last >= 0.35 or t in edges:
-            ticks.append(t); last = t
-    frames, durs, fi, shown, prev_fi = [], [], 0, [], None
-    ei = 0
-    for t in ticks:
-        while ei < len(ev) and ev[ei][0] <= t:
-            shown.append(ev[ei]); ei += 1
-        while fi + 1 < len(fs) and ft[fi + 1] <= t:
-            fi += 1
-        if t < ft[0]:
-            fi = -1
-        pressed = next((n for p, n in presses if p <= t < p + 0.3), None)
-        w = watch(Image.open(fs[max(fi, 0)]) if fi >= 0 else Image.new("RGB", Image.open(fs[0]).size), pressed)
-        w = w.resize((WATCH_W, WATCH_W * 600 // 480), Image.LANCZOS)
-        im = Image.new("RGB", (W, full), BG)
-        im.paste(w, (0, (H - w.height) // 2))
-        d = ImageDraw.Draw(im)
-        x0 = WATCH_W + 12
-        d.text((x0, 10), f"t = {t:.2f} s (simulated)", font=big, fill=FG)
-        d.text((x0, 34), "stock Garmin FR245 firmware: I2C, sensor hub SPI, UARTs, BLE", font=fnt, fill=DIM)
-        d.line((x0, 54, W - 8, 54), fill=(60, 64, 72))
-        for i, (t_e, k, text) in enumerate(shown[-ROWS:]):
-            y = 62 + i * 29
-            newest = i == len(shown[-ROWS:]) - 1
-            if newest:
-                d.rectangle((x0 - 4, y - 3, W - 6, y + 25), fill=(44, 50, 62))
-            d.text((x0, y), f"{t_e:7.3f}s", font=fnt, fill=DIM)
-            d.text((x0 + 62, y), text[:68], font=fnt, fill=COL[k] if newest or True else FG)
-            if newest:
-                d.rectangle((x0 - 4, y - 3, x0 - 1, y + 25), fill=COL[k])
-        if t >= GPS_SHOWN_S:
-            d.text((x0, H - 56), "GPS parked: start is gated on CPE.BIN, no fix is fed (README)", font=fnt, fill=COL["gps"])
-        if t >= 1.2:
-            d.text((x0, H - 42), "MAX17048 fuel gauge: configured by writes, never read", font=fnt, fill=COL["i2c"])
-        lx = x0
-        for k, name in (("i2c", "I2C power"), ("hub", "hub SPI"), ("uart", "radio UART"), ("gps", "GPS UART"), ("air", "BLE air"), ("btn", "button")):
-            d.rectangle((lx, H - 22, lx + 9, H - 13), fill=COL[k]); d.text((lx + 14, H - 24), name, font=fnt, fill=DIM)
-            lx += 14 + 7 * len(name) + 14
-        if irq:
-            irq_panel(d, irq, t, fnt)
-        frames.append(im)
-        changed = fi != prev_fi; prev_fi = fi
-        durs.append(300 if changed else 110)
-    # one shared palette (sampled over the whole run) keeps the text colours stable between frames
-    mosaic = Image.new("RGB", (W, full * 12))
-    for k in range(12):
-        mosaic.paste(frames[k * len(frames) // 12], (0, k * full))
-    pal = mosaic.quantize(64, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
-    frames = [f.quantize(palette=pal, dither=Image.Dither.NONE) for f in frames]
-    os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    frames[0].save(OUT, save_all=True, append_images=frames[1:], duration=durs, loop=0, optimize=True)
-    print(f"{OUT}: {len(frames)} frames, {sum(durs) / 1000:.1f} s, {os.path.getsize(OUT) / 1e6:.2f} MB, sim {t0:.1f}-{t1:.1f} s")
+    ticks, t1 = ticks_for(ev, presses, ft, irq)
+    # pass 1: the GIF (watch at 1x). Pass 2 (MP4): watch bodies in HD, the display still the 240 px panel scaled by whole pixels
+    for hd in (False, True):
+        if hd and not (len(sys.argv) > 2 and sys.argv[2] == "mp4"):
+            break
+        watch_render.configure(5 / 3 if hd else 1)
+        if hd:
+            mp = os.path.splitext(OUT)[0]
+            land, vert = (1920, 1080), (1080, 1920)
+            pl, pv = ffmpeg(mp + ".mp4", land), ffmpeg(mp + "_vertical.mp4", vert)
+        frames, durs, fi, shown, prev_fi, ei = [], [], 0, [], None, 0
+        for t in ticks:
+            while ei < len(ev) and ev[ei][0] <= t:
+                shown.append(ev[ei]); ei += 1
+            while fi + 1 < len(fs) and ft[fi + 1] <= t:
+                fi += 1
+            if t < ft[0]:
+                fi = -1
+            pressed = next((n for p, n in presses if p <= t < p + 0.3), None)
+            w = watch(Image.open(fs[max(fi, 0)]) if fi >= 0 else Image.new("RGB", Image.open(fs[0]).size), pressed)
+            changed = fi != prev_fi; prev_fi = fi
+            dur = 300 if changed else 110
+            if not hd:
+                w = w.resize((WATCH_W, WATCH_W * w.height // w.width), Image.LANCZOS)
+                im = Image.new("RGB", (W, full), BG)
+                im.paste(w, (0, (H - w.height) // 2))
+                panel(UD(ImageDraw.Draw(im)), 1.0, WATCH_W + 12, W, t, shown, irq)
+                frames.append(im); durs.append(dur)
+                continue
+            n = max(1, round(dur * 30 / 1000))
+            for (cw, chh), proc, pw, place in ((land, pl, 700, "land"), (vert, pv, 915, "vert")):
+                u = (cw - (w.width if place == "land" else 0)) / pw
+                im = Image.new("RGB", (cw, chh), BG)
+                if place == "land":  # crop 25 px of strap top and bottom so the watch fills the height
+                    im.paste(w.crop((0, (w.height - chh) // 2, w.width, (w.height - chh) // 2 + chh)), (0, 0))
+                    panel(UD(ImageDraw.Draw(im), u, w.width, 0), u, 12, pw, t, shown, irq)
+                else:
+                    im.paste(w, ((cw - w.width) // 2, 0))
+                    panel(UD(ImageDraw.Draw(im), u, 0, w.height), u, 12, pw, t, shown, irq)
+                proc.stdin.write(im.tobytes() * n)
+            if t == ticks[len(ticks) // 2]:
+                im.save("out/vert_sample.png")
+        if hd:
+            for proc in (pl, pv):
+                proc.stdin.close(); proc.wait()
+            continue
+        # one shared palette (sampled over the whole run) keeps the text colours stable between frames
+        mosaic = Image.new("RGB", (W, full * 12))
+        for k in range(12):
+            mosaic.paste(frames[k * len(frames) // 12], (0, k * full))
+        pal = mosaic.quantize(NCOL, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
+        frames = [f.quantize(palette=pal, dither=Image.Dither.NONE) for f in frames]
+        os.makedirs(os.path.dirname(OUT), exist_ok=True)
+        frames[0].save(OUT, save_all=True, append_images=frames[1:], duration=durs, loop=0, optimize=True)
+        print(f"{OUT}: {len(frames)} frames, {sum(durs) / 1000:.1f} s, {os.path.getsize(OUT) / 1e6:.2f} MB, sim 0.0-{t1:.1f} s")
 
 
 if __name__ == "__main__":

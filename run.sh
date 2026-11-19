@@ -19,4 +19,5 @@ if [ "${IRQ:-1}" = 1 ]; then IRQ_FLAGS=(--trace-interrupts); IRQ_PIPE="python3 s
 "$SIM" run --scenario "$SCEN" --trace-memory 0x400da100:4 --trace-memory 0x400da008:4 ${IRQ_FLAGS[@]+"${IRQ_FLAGS[@]}"} 2>&1 | $IRQ_PIPE | python3 scripts/qspi_summary.py | tee out/run.log
 ls out/frames | wc -l | xargs echo "frames written to out/frames:"
 python3 scripts/ble_phone.py out/ble.pcap
-rm -f out/irq_rates.json.tmp; python3 scripts/demo_gif.py docs/screens/demo.gif
+rm -f out/irq_rates.json.tmp; python3 scripts/demo_gif.py docs/screens/demo.gif mp4   # also docs/screens/demo.mp4 and demo_vertical.mp4 (needs ffmpeg)
+python3 scripts/watch_render.py                          # round per-screen PNGs, hero.png, hero.gif
