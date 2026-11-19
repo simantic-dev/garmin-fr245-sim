@@ -77,6 +77,10 @@ class Peer:
             for i in (2, 3, 4):
                 w[i] &= ~1
             self.ctx.send(bd5(1, struct.pack("<8I", *w)))
+        if pid == 0xF9:
+            # Garmin Pid_Product_Data = 0xFF: u16 product_id | u16 sw_version | NUL-terminated name (0xAA564 stores version*100 at 0x200253b8).
+            # MODELED SIMPLIFICATION: product id, version and name are not read from a real chip.
+            self.ctx.send(frame(0xFF, struct.pack("<HH", 5603, 402) + b"CXD5603GF\0"))
         if pid == 0x30:
             # 0x30 carries the baud 0x70800 = 460800; 0xAF87C: RX 0x31 (4 bytes) is accepted when its u32 equals the sent one
             self.ctx.send(frame(0x31, data))

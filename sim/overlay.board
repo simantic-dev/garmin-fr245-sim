@@ -24,7 +24,7 @@ portd:
     pullUps: "1 10"
 btn: Scripted.ScriptedGpioPeer @ none
     file: "peers/gpio/pin_script.py"
-    config: "{\"events\": [{\"at_ms\": 68000, \"line\": 1, \"level\": 0}, {\"at_ms\": 68300, \"line\": 1, \"level\": 1}, {\"at_ms\": 71000, \"line\": 2, \"level\": 0}, {\"at_ms\": 71300, \"line\": 2, \"level\": 1}, {\"at_ms\": 75000, \"line\": 1, \"level\": 0}, {\"at_ms\": 75300, \"line\": 1, \"level\": 1}, {\"at_ms\": 80000, \"line\": 1, \"level\": 0}, {\"at_ms\": 80300, \"line\": 1, \"level\": 1}]}"
+    config: "{\"holds\":[{\"line\":1,\"at_ms\":14000,\"for_ms\":300,\"level\":0},{\"line\":1,\"at_ms\":16000,\"for_ms\":300,\"level\":0},{\"line\":1,\"at_ms\":18000,\"for_ms\":300,\"level\":0},{\"line\":1,\"at_ms\":20000,\"for_ms\":300,\"level\":0},{\"line\":1,\"at_ms\":22000,\"for_ms\":300,\"level\":0},{\"line\":1,\"at_ms\":24000,\"for_ms\":300,\"level\":0},{\"line\":1,\"at_ms\":26000,\"for_ms\":300,\"level\":0},{\"line\":1,\"at_ms\":28000,\"for_ms\":300,\"level\":0},{\"line\":1,\"at_ms\":30000,\"for_ms\":300,\"level\":0},{\"line\":1,\"at_ms\":32000,\"for_ms\":300,\"level\":0},{\"line\":1,\"at_ms\":34000,\"for_ms\":300,\"level\":0},{\"line\":1,\"at_ms\":36000,\"for_ms\":300,\"level\":0},{\"line\":1,\"at_ms\":38000,\"for_ms\":300,\"level\":0},{\"line\":1,\"at_ms\":40000,\"for_ms\":300,\"level\":0},{\"line\":1,\"at_ms\":42000,\"for_ms\":300,\"level\":0},{\"line\":1,\"at_ms\":44000,\"for_ms\":300,\"level\":0},{\"line\":1,\"at_ms\":46000,\"for_ms\":300,\"level\":0},{\"line\":1,\"at_ms\":48000,\"for_ms\":300,\"level\":0}]}"
     numberOfGpios: 5
     0 -> gpioc@11
     1 -> gpiod@10
