@@ -46,7 +46,7 @@ flexio0:
     59 -> disp@27
     60 -> disp@28
 link: UART.ScriptedUartPeer @ sysbus 0x60200000
-    file: "peers/uart/garmin_link_peer.py"
+    file: "peers/uart/sony_cxd5603_gnss.py"
     baudRate: 115200
 cyw: UART.ScriptedUartPeer @ sysbus 0x60200100
     file: "peers/uart/cyw20719_wiced.py"
