@@ -1,0 +1,51 @@
+fg: I2C.ScriptedI2cSlave @ i2c3 0x36
+    file: "peers/i2c/max17048.py"
+pmic: I2C.ScriptedI2cSlave @ i2c3 0x28
+    file: "peers/i2c/max20303.py"
+    numberOfGpios: 1
+    0 -> gpioa@21
+hub: Scripted.ScriptedGpioPeer @ none
+    file: "peers/gpio/garmin_sensor_hub.py"
+    numberOfGpios: 1
+    0 -> gpiob@5
+gpioa:
+    27 -> hub@0
+    11 -> hub@1
+    pullUps: "20 22"
+gpioc:
+    pullUps: "11"
+gpiod:
+    pullUps: "1 10"
+porta:
+    pullUps: "20 22"
+portc:
+    pullUps: "11"
+portd:
+    pullUps: "1 10"
+btn: Scripted.ScriptedGpioPeer @ none
+    file: "peers/gpio/pin_script.py"
+    config: "{\"events\": [{\"at_ms\": 16000, \"line\": 0, \"level\": 0}, {\"at_ms\": 16300, \"line\": 0, \"level\": 1}, {\"at_ms\": 17800, \"line\": 1, \"level\": 0}, {\"at_ms\": 18100, \"line\": 1, \"level\": 1}, {\"at_ms\": 19600, \"line\": 2, \"level\": 0}, {\"at_ms\": 19900, \"line\": 2, \"level\": 1}, {\"at_ms\": 21400, \"line\": 3, \"level\": 0}, {\"at_ms\": 21700, \"line\": 3, \"level\": 1}, {\"at_ms\": 23200, \"line\": 4, \"level\": 0}, {\"at_ms\": 23500, \"line\": 4, \"level\": 1}]}"
+    numberOfGpios: 5
+    0 -> gpioc@11
+    1 -> gpiod@10
+    2 -> gpiod@1
+    3 -> gpioa@20
+    4 -> gpioa@22
+disp: Scripted.ScriptedGpioPeer @ none
+    file: "peers/display/garmin_mip_parallel.py"
+    config: "{\"png_dir\": \"out/frames\"}"
+    numberOfGpios: 32
+flexio0:
+    34 -> disp@2
+    35 -> disp@3
+    36 -> disp@4
+    37 -> disp@5
+    38 -> disp@6
+    39 -> disp@7
+    45 -> disp@13
+    46 -> disp@14
+    59 -> disp@27
+    60 -> disp@28
+link: UART.ScriptedUartPeer @ sysbus 0x60200000
+    file: "peers/uart/garmin_link_peer.py"
+    baudRate: 115200
