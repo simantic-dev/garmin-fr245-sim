@@ -4,13 +4,12 @@ pmic: I2C.ScriptedI2cSlave @ i2c3 0x28
     file: "peers/i2c/max20303.py"
     numberOfGpios: 1
     0 -> gpioa@21
-hub: Scripted.ScriptedGpioPeer @ none
-    file: "peers/gpio/garmin_sensor_hub.py"
-    numberOfGpios: 1
+hubspi: SPI.ScriptedSpiSlave @ spi2 0
+    file: "peers/spi/garmin_sensor_hub_spi.py"
+    numberOfGpios: 2
     0 -> gpiob@5
 gpioa:
-    27 -> hub@0
-    11 -> hub@1
+    27 -> hubspi@1
     pullUps: "20 22"
 gpioc:
     pullUps: "11"
