@@ -225,6 +225,23 @@ No mismatches: every UUID on Gadgetbridge's list is registered by the firmware.
 
 Put a Forerunner 245 (Music) in pairing mode and scan with nRF Connect. The advertisement should show flags 0x06, the 16-bit service 0xFE1F, manufacturer data with company 0x0087 and a name starting "Forerunner". Compare each field with the first packets in `docs/ble.pcap` (open it in Wireshark, or `python3 scripts/ble_phone.py docs/ble.pcap`). Fields that differ (address, interval, unit id, shortened name) are simulation stand-ins listed under Stand-ins above.
 
+## USB: the watch enumerates on a host
+
+`./run.sh --usb` plugs the watch's USB cable in at 8 s of guest time, enumerates it as a host (`scripts/usb_host.py`, over pyrite's `--usb-raw`) and writes the transfers to `docs/usb.pcap` (Linux usbmon, opens in Wireshark; timestamps are the script's wall clock). Garmin Express talks to the watch over this USB link, not Bluetooth.
+
+The firmware drives the K28 **USBHS** (ChipIdea/EHCI device controller at 0x400A1000, IRQ 93) with its USBPHY at 0x400A2000: its driver programs USBMODE, ENDPTLISTADDR and ENDPTSETUPSTAT, and the ISR is vector 109. The same i.MX RT ChipIdea model is reused; the K28 PHY adds `PLL_SIC` (PLL lock bit 31) at 0xA0.
+
+What the real v3.10 firmware returns:
+
+| | |
+|---|---|
+| Device | USB 2.0, class 0xff/0xff/0xff (vendor specific, not MTP), ep0 64 bytes, VID:PID **091e:0003** (Garmin), bcdDevice 0001 |
+| Strings | none (iManufacturer, iProduct and iSerialNumber are 0) |
+| Configuration 1 | 500 mA, one interface (0xff/0xff/0xff) with bulk IN 0x81 (512 bytes), interrupt IN 0x82 (64 bytes) and bulk OUT 0x03 (512 bytes) |
+| SET_ADDRESS, SET_CONFIGURATION | accepted |
+
+Stand-ins: the cable is a forced MAX20303 status (STATUS1 bit 3 plus INT0 bit 3 at 8 s, `usb_vbus_at_ms` in `peers/i2c/max20303.py`), found by probing which status makes the firmware call its USB init, since the PMIC datasheet and the K28 reference manual were not available. The PLL lock is instant. Not done: any Garmin protocol traffic on the bulk endpoints (it is not MTP, so GetDeviceInfo does not apply).
+
 ## Known gaps
 
 - The host-link reply on LPUART3 is unknown, so `garmin_link_peer.py` only logs. The firmware retries about 3 times before
