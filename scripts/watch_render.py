@@ -12,7 +12,12 @@ W, H, CX, CY = 480, 600, 240, 300
 BUTTONS = {  # name: (side, dy, label)
     "PTC11": ("L", -70, "LIGHT?"), "PTD1": ("L", 0, "UP"), "PTD10": ("L", 70, "DOWN"),
     "PTA20": ("R", -45, "START?"), "PTA22": ("R", 45, "BACK?")}
-PRESS = {"PTD10": 17.8, "PTD1": 19.6}   # scenario times (s), pressed 300 ms
+# (name, scenario time in s): the last display frame at or before that time. Times are from sim/overlay.board's button script.
+SCREENS = [("boot-logo", 2.8), ("language", 6.3), ("pair-with-phone", 9.8), ("download-garmin-connect-mobile", 11.5),
+           ("pair-with-phone-back", 13.5), ("pair-no-highlighted", 16.6), ("distance-units", 20.5), ("time-format", 22.8),
+           ("gender", 25.5), ("birth-year", 30.0), ("height", 37.0), ("weight", 42.0), ("set-time-use-gps", 50.5),
+           ("set-time-manual", 52.9), ("set-hours", 55.0), ("set-minutes", 57.5), ("set-year", 67.0), ("set-month", 72.8),
+           ("set-day", 75.0), ("watch-face", 80.0), ("run-glance", 86.0)]
 
 def circle(img, d):
     img = img.convert("RGB").resize((d, d), Image.NEAREST)
@@ -37,15 +42,11 @@ def watch(frame, pressed=None):
 if __name__ == "__main__":
     fs = sorted(glob.glob(f"{FR}/*.png"))
     t = [int(re.search(r"_(\d+)ms", f).group(1)) / 1000 for f in fs]
-    load = lambda i: Image.open(fs[i])
+    pick = lambda ts: Image.open(fs[max(i for i in range(len(fs)) if t[i] <= ts)])
     os.makedirs(OUT, exist_ok=True)
-    for name, i in [("1-boot-logo-4.8s", 0), ("2-language-12.9s", 2), ("3-scrolled-after-PTD10", 15),
-                    ("4-back-after-PTD1", 23), ("5-redraw-after-PTA20", 27)]:
-        circle(load(i), 240).save(f"{OUT}/{name}.png")
-    watch(load(2)).save(f"{OUT}/hero.png")
-    seq, durs = [], []
-    for i in range(24):  # boot .. back after PTD1
-        p = next((n for n, s in PRESS.items() if s <= t[i] < s + 0.3), None)
-        seq.append(watch(load(i), p).quantize(64))
-        durs.append(int(min(max(((t[i + 1] if i < 23 else t[i] + 1.5) - t[i]) * 150, 80), 900)))
-    seq[0].save(f"{OUT}/hero.gif", save_all=True, append_images=seq[1:], duration=durs, loop=0, optimize=True)
+    seq = []
+    for n, (name, ts) in enumerate(SCREENS, 1):
+        circle(pick(ts), 240).save(f"{OUT}/{n:02d}-{name}-{ts:.0f}s.png")
+        seq.append(watch(pick(ts)).quantize(64))
+    watch(pick(80.0)).save(f"{OUT}/hero.png")
+    seq[0].save(f"{OUT}/hero.gif", save_all=True, append_images=seq[1:], duration=[1000] * len(seq), loop=0, optimize=True)

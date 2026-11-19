@@ -2,29 +2,58 @@
 
 ![Garmin FR245 boot and use, with the firmware's UART traffic and BLE packets](docs/screens/demo.gif)
 
-Stock Garmin firmware, unmodified; right panel = the firmware's real UART traffic and the BLE packets it caused, same simulated clock.
-From t = 0: the display is dark for the first 55 s while the firmware sets up the MAX17048 fuel gauge and MAX20303 PMIC over I2C (writes only; it never reads VCELL or SOC), then formats the 32 MiB QuadSPI NOR (erase and program, one line per 4 s of simulated time) and probes the sensor hub (PTA27 reset). The display first draws at 55.4 s. Left: the display pixels the firmware clocks out (language screen, English, Pair with phone, Yes, then the advertising burst); the pressed button lights. Dead time is skipped; the clock shows the real simulated time. `./run.sh` regenerates it (`scripts/demo_gif.py`).
+Stock Garmin firmware, unmodified, booted from a formatted ("factory") flash. Left: the display pixels the firmware clocks out, with the pressed button lit. Right: the firmware's real traffic on the same simulated clock: I2C writes to the MAX17048 fuel gauge and MAX20303 PMIC, the sensor hub SPI messages (summarised, e.g. `hub>K28 accel batch 25 samples z=+1.00 g`), the radio UART, the GPS UART handshake, BLE adverts on the simulated air (one row per second) and the button presses. GPS is parked (see below). Dead time is skipped; the clock shows the real simulated time. A person's pace is scripted in `sim/overlay.board` (`btn`: one press every 2.5 s). `./run.sh` regenerates it (`scripts/demo_gif.py`).
+
+Built with pyrite commit `5f59b385874894cb237ff0fc13b0569dd0f3a9c3` (core clock 120 MHz).
 
 ```sh
-./run.sh    # downloads Garmin's v3.10 firmware, runs 80 virtual s (about 90 s wall), writes PNG frames to out/frames/
+./run.sh    # downloads Garmin's v3.10 firmware, runs 96 virtual s (about 80 s wall, Apple M5), writes PNG frames to out/frames/
 ```
 
-![boot logo, language screen, scrolled screen, back, redraw](docs/screens/contact-sheet.png)
+![the watch face the setup wizard ends on](docs/screens/hero.png)
 
 Garmin's unmodified Forerunner 245 v3.10 firmware (NXP Kinetis K28, MK28FN2M0VMI15) running on pyrite, the Simantic
 simulator. The display is rendered from the pixels the firmware clocks out of FlexIO; each frame is a PNG.
 
-**Timeline of the scenario** (virtual time; buttons are active-low, pressed for 300 ms):
+**Timeline of the scenario** (virtual time, warm boot from the factory flash; buttons are active-low, 300 ms; one press every 2.5 s):
 
 | Time | Event | Screen |
 | --- | --- | --- |
-| 4.82 s | boot | [Garmin logo](docs/screens/1-boot-logo-4.8s.png) |
-| 12.9 s | | [language screen, "English"](docs/screens/2-language-12.9s.png) |
-| 16.0 s | PTC11 | no visible change |
-| 17.8 s | PTD10 | [list scrolls down](docs/screens/3-scrolled-after-PTD10.png) |
-| 19.6 s | PTD1 | [scrolls back](docs/screens/4-back-after-PTD1.png) |
-| 21.4 s | PTA20 | [screen redraws](docs/screens/5-redraw-after-PTA20.png) |
-| 23.2 s | PTA22 | no visible change |
+| 2.75 s | boot | [Garmin logo](docs/screens/01-boot-logo-3s.png) |
+| 5.9 s | | [language screen](docs/screens/02-language-6s.png) |
+| 7.5 s | PTD10 (select English) | [Pair with phone? Yes / No](docs/screens/03-pair-with-phone-10s.png); BLE advertising starts |
+| 10.0 s | PTD10 (Yes) | [Download Garmin Connect Mobile](docs/screens/04-download-garmin-connect-mobile-12s.png) |
+| 13.0 s | PTD1 (back) | [Pair with phone? again](docs/screens/05-pair-with-phone-back-14s.png) |
+| 16.0 s | PTA20 (next) | [No highlighted](docs/screens/06-pair-no-highlighted-17s.png) |
+| 18.5 s | PTD10 (No) | [Distance: Miles](docs/screens/07-distance-units-20s.png) |
+| 21.0 to 33.5 s | PTD10 | [Time Format](docs/screens/08-time-format-23s.png), [Gender](docs/screens/09-gender-26s.png), [Birth Year](docs/screens/10-birth-year-30s.png) |
+| 36.0 to 46.0 s | PTD10 | [Height](docs/screens/11-height-37s.png), [Weight](docs/screens/12-weight-42s.png) |
+| 48.8 s | | [Set Time: Use GPS / Manual](docs/screens/13-set-time-use-gps-50s.png) |
+| 51.0 s | PTA20 | [Manual highlighted](docs/screens/14-set-time-manual-53s.png) |
+| 53.5 to 71.0 s | PTD10 | [Set Hours](docs/screens/15-set-hours-55s.png), [Minutes](docs/screens/16-set-minutes-58s.png), AM/PM, [Year](docs/screens/17-set-year-67s.png), [Month](docs/screens/18-set-month-73s.png) |
+| 73.5 to 78.5 s | PTD10 | [Day](docs/screens/19-set-day-75s.png) |
+| 78.8 s | | [watch face](docs/screens/20-watch-face-80s.png) (clock, 0.0 mi) |
+| 82.0 s | PTD1 | no visible change |
+| 84.5 s | PTD10 | [Run glance](docs/screens/21-run-glance-86s.png) (GPS red: no fix, parked) |
+| 87.0 s | PTD1 | back to the watch face |
+| 89.5 s | PTD10 | Run glance again |
+| 92.0 s | PTA22 | Tip bubble "Hold for activity settings, training, and more." |
+
+The numeric fields (birth year 1978, height 5'10", weight 170, time 1:00 AM, 1 Jan 2019) are the firmware's defaults, accepted with PTD10. Which button is which is a guess from behaviour: PTD10 selects and moves on, PTD1 goes back, PTA20 moves the highlight down, PTA22 is unconfirmed.
+
+**Boot against a real watch**
+
+| | Real watch ([video](https://www.youtube.com/shorts/SEK3FTuwlyA), approximate) | Sim, warm boot (factory flash) | Sim, `--first-boot` |
+| --- | --- | --- | --- |
+| Logo | about instant | 2.75 s | 54.0 s |
+| Usable (first screen that takes buttons) | about 15 s to the watch face | 5.9 s (language screen) | 57.2 s |
+| Watch face | about 15 s | 78.8 s, after the scripted setup wizard | not run that far |
+
+The sim's watch face time is the end of a 70 s scripted setup wizard, so it is not comparable with the video; the language screen at 5.9 s is the comparable number. The video figures are read off the video by hand, not measured by us.
+
+Why the logo is not instant: about 1 s of the 2.75 s is the firmware waiting for the RTC oscillator. Measured with `--trace-memory 0x4003d000:32`: RTC_CR is written 0x500 (OSCE and the 16 pF load capacitor set) at 0.027 s (pc 0xC43E0), the next RTC access is at 1.027 s (pc 0xC43F2: read SR, then RTC register writes), and the MAX17048/MAX20303 init starts at 1.128 s. Presumably a cold part needs this time for the 32.768 kHz crystal to start (not checked against the reference manual); the sim keeps the wait because the firmware requests it. The rest is the firmware's own init up to the first draw.
+
+`./run.sh --first-boot` skips the preloaded flash: the firmware finds no filesystem and formats the 32 MiB QuadSPI NOR (erase and program, 1 s to 54 s of virtual time, 54 one-second QSPI lines in the log), then draws the logo at 54.0 s and the language screen at 57.2 s. `scripts/make_factory_flash.sh` runs that once and dumps the array to `out/factory_nor.bin`, which the default run preloads. The button script in `sim/overlay.board` is timed for the warm boot, so on a first boot its first presses land while the flash is still formatting.
 
 ```mermaid
 flowchart LR
@@ -49,13 +78,11 @@ point `SIM=/path/to/sim ./run.sh` at a build that has it.
 
 Peer tests: `python3 -m pytest peers`.
 
-## Reaching "Pair with phone?"
+## Setup wizard and the sensor hub
 
-With the QuadSPI NOR backed by the array (pyrite branch `agent/fr245-boot-3744`), the firmware formats its 32 MiB
-flash filesystem on first boot (about 63 s of virtual time, erase times from the shared NOR model), then the language
-screen answers PTD10 at 75 s: [English selected](docs/screens/6-english-selected-75s.png), then
-[Pair with phone? Yes / No](docs/screens/7-pair-with-phone-75s.png). The scenario runs 80 s virtual (about 90 s wall).
-On the pair screen PTD10 selects the highlighted entry (a second press at 80 s moves to an "Initializing" screen, [frame](docs/screens/8-initializing-after-yes-95s.png)); PTA20 moves the highlight Yes to No.
+The wizard runs end to end on the stock firmware: language, Pair with phone (Yes shows "Download Garmin Connect Mobile", then "Go to mobile app to add device" after about 8 s; PTD1 goes back), units, time format, gender, birth year, height, weight, Set Time. On Set Time, Manual gives Set Hours, Minutes, AM/PM, Year, Month, Day and then the watch face. Use GPS would wait for a fix forever (GPS is parked).
+
+The sensor hub (`peers/spi/garmin_sensor_hub_spi.py`) is accepted at 2.23 s (the K28's hello, answered with hub id 0x0100 and a version string). The K28 then configures the accelerometer (3.15 s: 25 Hz, 1 s batches, 8 g range), and a batch of 25 samples follows every second from 4.15 s. The samples are a stand-in (flat wrist, +1 g on Z, small noise).
 
 ## Bluetooth (advertising goes over the simulated air)
 
@@ -68,8 +95,8 @@ connection handle 0xffff).
 The firmware sends no "set advertising data" or "enable advertising" command. Advertising is one 400-byte configuration
 command (opcode byte 0x08, built at flat address 0x2233c0; mode 0 = off, mode 1 = on) that the radio turns into advertising.
 Mode 1 carries flags 0x06, a 16-bit service list with 0xFE1F (Garmin) and manufacturer data (company 0x0087, then
-07 00 0c 04 01 and a 4-byte unit id, ff ff ff ff here); the name comes from the earlier 0x16 command. Mode 1 is sent at
-60.5 s and 80.0 s, mode 0 at 63.5 s (cause not yet found).
+07 00 0c 04 01 and a 4-byte unit id, ff ff ff ff here); the name comes from the earlier 0x16 command. In this run mode 0 is sent at
+5.76 s and mode 1 at 7.53 s, and no mode 0 follows (the previous first-boot run saw 60.5, 63.5 and 80.0 s).
 
 ### Over the air to a simulated phone
 
@@ -78,19 +105,15 @@ endpoint (`dut.phone`, a listening radio) and writes every advertisement to `out
 Wireshark); the script decodes it:
 
 ```
-[  59.9068s] ch37 ADV_IND  00:00:00:00:00:00  flags=0x06  uuids=0xFE1F  company=0x0087 mfg=0c0401ffffffff  name="Forerunner" (shortened)
-   ... until 63.4887s: 168 advertisements
-[  80.0295s] ch37 ADV_IND  00:00:00:00:00:00  flags=0x06  uuids=0xFE1F  company=0x0087 mfg=0c0401ffffffff  name="Forerunner" (shortened)
-   ... until 89.9734s: 462 advertisements
+[   7.5255s] ch37 ADV_IND  00:00:00:00:00:00  flags=0x06  uuids=0xFE1F  company=0x0087 mfg=0c0401ffffffff  name="Forerunner" (shortened)
+   ... until 95.9459s: 4083 advertisements
 ```
 
-Nothing is on the air from 63.51 s (mode 0) to 80.03 s. The watch screen at those moments: boot logo while advertising
-([59.9 s](docs/screens/9-adv-on-59.9s.png)), still the logo at [mode 0, 63.5 s](docs/screens/10-adv-off-63.5s.png), and
-[80.0 s](docs/screens/11-adv-on-80.0s.png).
+Advertising runs from 7.53 s to the end of the run, through the Pair with phone, Download Garmin Connect Mobile and Go to mobile app screens and the rest of the wizard (the watch never connects).
 
 Real firmware: the unmodified v3.10 image builds and sends the 0x16 name and the 0x08 config. The peer decodes them
-(offsets from the builder at 0x2233c0), so the on/off times (59.9 s on, 63.5 s off, 80.0 s on) are the firmware's own.
-The peer now speaks when the DUT enables the LPUART0 receiver (55.406 s; the sim passes `CTRL[RE]` to the peer as
+(offsets from the builder at 0x2233c0), so the on/off times (off 5.76 s, on 7.53 s) are the firmware's own.
+The peer now speaks when the DUT enables the LPUART0 receiver (about 3.06 s; the sim passes `CTRL[RE]` to the peer as
 `on_rx_enable`), once: 0x1b4a then 0x24. No timer, and the firmware needed no repeat.
 
 Stand-ins:
@@ -143,8 +166,22 @@ Put a Forerunner 245 (Music) in pairing mode and scan with nRF Connect. The adve
 - The QuadSPI base address was fitted from pointers in the image, not read from documentation.
 - The display peer's pixel framing and line packing were derived from observed waveforms and the firmware's packer, not
   from a panel datasheet; the panel is unidentified.
-- Fuel gauge, PMIC and sensor hub peers are scripted register models; timing is not measured against a watch.
-- No GPS or heart-rate models; the radio is the stand-in above. The flash filesystem is the shared NOR model with an erased (0xFF) array; its size (32 MiB) and timing are not the FR245 part's.
+- No heart-rate model.
+- The flash filesystem is the shared NOR model (32 MiB, shared erase and program times, not the FR245 part's).
+
+## What is real and what is a stand-in
+
+| Part | Status |
+| --- | --- |
+| Garmin FR245 v3.10 firmware, K28 core, clocks (120 MHz), QuadSPI, FlexIO, LPUARTs, SPI, I2C | the real image on the pyrite model |
+| Display | pixels decoded from the FlexIO waveform the firmware clocks out; the panel itself is not modelled |
+| Sensor hub | stand-in Python peer: protocol read off the firmware, timings are guesses |
+| Accelerometer | stand-in: 25 Hz, flat wrist, +1 g on Z with small noise, via the hub |
+| MAX17048 fuel gauge | stand-in; the firmware only writes it (never reads VCELL or SOC) in these runs |
+| MAX20303 PMIC | stand-in register model: 4 reads at init, writes after |
+| GPS (Sony CXD5603) | parked by decision: the handshake is answered, no fix is fed; the firmware's GPS start is gated on `CPE.BIN` (see GPS below) |
+| BLE radio (CYW20719) | stand-in: WICED protocol not implemented; adverts are real firmware output over a simulated air, the phone is a passive receiver |
+| Buttons | scripted GPIO, which button is which is a guess |
 
 ## GPS (LPUART3, Sony CXD5603): decoded so far
 

@@ -3,7 +3,7 @@
 Reads one scenario run: out/frames/*.png, out/run.log (peers log with timestamps), out/ble.pcap, sim/overlay.board (button script).
 Usage: ./run.sh > out/run.log   (or: sim run --scenario sim/scenario.yaml > out/run.log), then python3 scripts/demo_gif.py [out_gif]
 Starts at t = 0 (the display is dark until the firmware first draws). Dead time is skipped: a GIF frame is made when the display changes, a button moves or traffic arrives; the clock shows the real time.
-The first-boot flash format (QuadSPI erase/program, see qspi_summary.py) is shown as one line every FLASH_EVERY s of simulated time."""
+Rows: I2C writes (one per 0.25 s), sensor hub SPI messages, radio UART, GPS UART handshake, one BLE advert per second, buttons."""
 import glob, json, os, re, sys
 from PIL import Image, ImageDraw, ImageFont
 sys.path.insert(0, os.path.dirname(__file__))
@@ -11,11 +11,11 @@ from watch_render import BUTTONS, watch
 from ble_phone import scan, ad_fields
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "docs/screens/demo.gif"
-W, H, WATCH_W, ROWS = 900, 500, 320, 14
-COL = {"uart": (110, 200, 255), "link": (255, 214, 102), "air": (120, 230, 140), "btn": (255, 150, 40),
-       "i2c": (255, 120, 190), "flash": (190, 150, 255)}
+W, H, WATCH_W, ROWS = 900, 500, 320, 13
+COL = {"uart": (110, 200, 255), "gps": (255, 214, 102), "air": (120, 230, 140), "btn": (255, 150, 40),
+       "i2c": (255, 120, 190), "hub": (190, 150, 255)}
 BG, FG, DIM = (18, 20, 24), (225, 225, 225), (130, 135, 145)
-FLASH_EVERY = 4
+GPS_SHOWN_S = 6.0  # the GPS handshake is listed up to here, then one note
 PINS = ["PTC11", "PTD10", "PTD1", "PTA20", "PTA22"]  # overlay.board `btn` lines 0..4
 CMD = {0x01: "register app", 0x42: "init step", 0x16: "set name", 0x12: "cmd", 0x14: "cmd", 0x09: "cmd", 0x0A: "cmd"}
 
@@ -58,7 +58,8 @@ def label_tx(h):
 
 
 def events():
-    ev, last_q = [], -99  # (t, kind, text)
+    ev, last = [], {}  # (t, kind, text); last[kind] = time of the last kept row for the rate-limited kinds
+    gps_rows = 0
     for l in open("out/run.log", errors="replace"):
         m = re.search(r"cyw rx t=([\d.]+) opcode=0x1982 payload=(\w+)", l)
         if m:
@@ -66,40 +67,41 @@ def events():
         m = re.search(r"cyw tx t=([\d.]+) (\w+)", l)
         if m:
             ev.append((float(m[1]), "uart", label_tx(bytes.fromhex(m[2]))))
-        m = re.search(r"garmin-link rx t=([\d.]+) id=(0x\w+) data=(\w*)", l)
-        if m:
-            body = bytes([int(m[2], 16), len(m[3]) // 2]) + bytes.fromhex(m[3])
-            raw = bytes([0x10]) + body + bytes([-sum(body) & 255, 0x10, 3])
-            ev.append((float(m[1]), "link", f"K28>host {raw.hex(' ')} (DLE {m[2]})"))
+        m = re.search(r"gnss rx t=([\d.]+) id=(0x\w+) msg=(0x\w+) data=(\w*)", l)
+        if m and float(m[1]) < GPS_SHOWN_S:  # the handshake; the same exchange repeats every 11 s (README, GPS)
+            ev.append((float(m[1]), "gps", f"K28>GPS id {m[2]} msg {m[3]} {m[4][:16]}"))
         m = re.search(r"\] (max17048|max20303) t=([\d.]+) (.*)", l)
-        if m:
-            ev.append((float(m[2]), "i2c", f"K28>{m[1].upper()} {m[3]}"))
+        if m and float(m[2]) - last.get("i2c", -9) >= 0.25:  # the init burst is dozens of writes in a few ms
+            last["i2c"] = float(m[2])
+            ev.append((last["i2c"], "i2c", f"K28>{m[1].upper()} {m[3]}"))
         m = re.search(r"hub t=([\d.]+) (RESET_N \w+)", l)
         if m:
-            ev.append((float(m[1]), "i2c", f"K28>sensor hub {m[2]} (PTA27)"))
-        m = re.search(r"qspi t=([\d.]+) erase=(\d+) program=(\d+) last_erase=(\w+) last_program=(\w+)", l)
-        if m and float(m[1]) - last_q >= FLASH_EVERY:
-            last_q = float(m[1])
-            e, pg = int(m[2]), int(m[3])
-            ev.append((last_q, "flash", f"K28>QSPI NOR erase 64K block {m[4]} (n={e} this s)" if e else f"K28>QSPI NOR program page {m[5]} (n={pg} this s)"))
+            ev.append((float(m[1]), "hub", f"K28>sensor hub {m[2]} (PTA27)"))
+        m = re.search(r"hubev t=([\d.]+) (accel config .*|accel batch .*|hello .*)", l)
+        if m:
+            ev.append((float(m[1]), "hub", ("K28>hub " if m[2][:5] == "accel" and m[2][6] == "c" else "hub>K28 ") + m[2]))
+    ev.append((GPS_SHOWN_S, "gps", "GPS parked: needs CPE.BIN (README)"))
+    n_air = 0
     for ts, ch, pdu, _, ad in scan("out/ble.pcap"):
+        n_air += 1
+        if ts - last.get("air", -9) < 1.0:  # one row per second; the radio advertises every ~20 ms
+            continue
+        last["air"] = ts
         f = {t: v for t, v in ad_fields(ad)}
         s = f"air ch{ch} {pdu}"
         if 0x03 in f:
             s += f" uuid=0x{f[3][0] | f[3][1] << 8:04X}"
         if 0xFF in f:
-            c = f[0xFF][0] | f[0xFF][1] << 8
-            s += f" company=0x{c:04x}" + ("" if c == 0x87 else "")
+            s += f" company=0x{f[0xFF][0] | f[0xFF][1] << 8:04x}"
         for t in (0x08, 0x09):
             if t in f:
                 s += f' name={f[t].decode(errors="replace")}'
         ev.append((ts, "air", s))
     cfg = json.loads(re.search(r'btn:.*?config: "(.*?)"\n', open("sim/overlay.board").read(), re.S)[1].replace('\\"', '"'))
     presses = []
-    for e in cfg["events"]:
-        if e["level"] == 0:
-            presses.append((e["at_ms"] / 1000, PINS[e["line"]]))
-            ev.append((e["at_ms"] / 1000, "btn", f"button {PINS[e['line']]} pressed ({BUTTONS[PINS[e['line']]][2].strip('?')})"))
+    for e in cfg["holds"]:
+        presses.append((e["at_ms"] / 1000, PINS[e["line"]]))
+        ev.append((e["at_ms"] / 1000, "btn", f"button {PINS[e['line']]} pressed ({BUTTONS[PINS[e['line']]][2].strip('?')})"))
     return sorted(ev, key=lambda e: e[0]), presses
 
 
@@ -140,7 +142,7 @@ def main():
         d = ImageDraw.Draw(im)
         x0 = WATCH_W + 12
         d.text((x0, 10), f"t = {t:.2f} s (simulated)", font=big, fill=FG)
-        d.text((x0, 34), "stock Garmin FR245 firmware: I2C, flash, UART, BLE", font=fnt, fill=DIM)
+        d.text((x0, 34), "stock Garmin FR245 firmware: I2C, sensor hub SPI, UARTs, BLE", font=fnt, fill=DIM)
         d.line((x0, 54, W - 8, 54), fill=(60, 64, 72))
         for i, (t_e, k, text) in enumerate(shown[-ROWS:]):
             y = 62 + i * 29
@@ -148,11 +150,15 @@ def main():
             if newest:
                 d.rectangle((x0 - 4, y - 3, W - 6, y + 25), fill=(44, 50, 62))
             d.text((x0, y), f"{t_e:7.3f}s", font=fnt, fill=DIM)
-            d.text((x0 + 62, y), text, font=fnt, fill=COL[k] if newest or True else FG)
+            d.text((x0 + 62, y), text[:68], font=fnt, fill=COL[k] if newest or True else FG)
             if newest:
                 d.rectangle((x0 - 4, y - 3, x0 - 1, y + 25), fill=COL[k])
+        if t >= GPS_SHOWN_S:
+            d.text((x0, H - 56), "GPS parked: start is gated on CPE.BIN, no fix is fed (README)", font=fnt, fill=COL["gps"])
+        if t >= 1.2:
+            d.text((x0, H - 42), "MAX17048 fuel gauge: configured by writes, never read", font=fnt, fill=COL["i2c"])
         lx = x0
-        for k, name in (("i2c", "I2C/power"), ("flash", "QSPI flash"), ("uart", "radio UART"), ("link", "host link"), ("air", "BLE air"), ("btn", "button")):
+        for k, name in (("i2c", "I2C power"), ("hub", "hub SPI"), ("uart", "radio UART"), ("gps", "GPS UART"), ("air", "BLE air"), ("btn", "button")):
             d.rectangle((lx, H - 22, lx + 9, H - 13), fill=COL[k]); d.text((lx + 14, H - 24), name, font=fnt, fill=DIM)
             lx += 14 + 7 * len(name) + 14
         frames.append(im)

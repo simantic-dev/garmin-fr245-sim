@@ -1,4 +1,4 @@
-# Boot (about 63 s virtual: the firmware formats the QuadSPI NOR first), then PTD10 at 68 s selects English, PTD1 at 71 s goes back, PTD10 at 75 s selects English again (events are in overlay.board, `btn`; a second PTD10 at 80 s answers Yes).
+# Warm boot from the preloaded factory flash (out/factory_nor.bin): logo at 2.75 s, language screen at 5.9 s, then a person-paced button script (one press every 2.5 s, events in overlay.board, `btn`) walks the setup wizard to the watch face at 78.8 s.
 machines:
   dut:
     mcu: MK28FN2M0VMI15
@@ -13,4 +13,4 @@ media:
   - type: ble
     connect: [dut.cyw, dut.phone]
     pcap: ../out/ble.pcap
-timeout: 90
+timeout: 96

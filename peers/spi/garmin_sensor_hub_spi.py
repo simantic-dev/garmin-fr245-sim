@@ -154,6 +154,7 @@ class Slave:
         if mid == ID_ACCEL_CFG and n == 12 and len(data) >= 12:
             rate, lat_ms, rng = int.from_bytes(data[4:8], "little"), *(int.from_bytes(data[i:i + 2], "little") for i in (8, 10))
             self.accel = (rate, lat_ms, rng)
+            self.ctx.info(f"hubev t={self.ctx.now_us / 1e6:.4f} accel config {rate} Hz, batch {lat_ms} ms, range {rng} g")
             self.queue(ID_ACCEL_ACK, bytes(data[:12]))      # the K28 (0xb38c8 id 0x188d) takes the echo as the ack: rate equal, range >= asked
             self.drop("accel")
             self.at(lat_ms * 1000, "accel")
@@ -172,6 +173,8 @@ class Slave:
                 v = int(lsb_per_g * (g + ((self.rng >> 16) % 25 - 12) / 1000))
                 samples += v.to_bytes(2, "little", signed=True)
         ms = int(self.ctx.now_us // 1000)
+        zs = [int.from_bytes(samples[i:i + 2], "little", signed=True) for i in range(4, len(samples), 6)]
+        self.ctx.info(f"hubev t={self.ctx.now_us / 1e6:.4f} accel batch {n} samples z={sum(zs) / len(zs) / lsb_per_g:+.2f} g")
         return bytes([0, 20]) + n.to_bytes(2, "little") + ms.to_bytes(4, "little") + bytes(4) + (ms * 32768 // 1000).to_bytes(4, "little") + bytes(4) + bytes(samples)
 
     def request(self, h):
@@ -183,6 +186,7 @@ class Slave:
             self.reply = self.outbox[0] if self.outbox else header(ID_POLL)
             return
         if mid == ID_HELLO:
+            self.ctx.info(f"hubev t={self.ctx.now_us / 1e6:.4f} hello accepted, reports id {self.hubid:#06x} and version {self.version.decode()}")
             self.queue(ID_HUB_INFO, self.hubid.to_bytes(2, "little") + bytes(6))
             self.queue(ID_HUB_VERSION, self.version)
         self.reply = header(mid, int.from_bytes(h[4:8], "little"), (int.from_bytes(h[8:12], "little") or 0x100) if h[12] & 0x0F == 0 and h[4:8] != bytes(4) else int.from_bytes(h[8:12], "little"), h[12] & 0x0F)
