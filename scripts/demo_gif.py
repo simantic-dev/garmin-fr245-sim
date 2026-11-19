@@ -3,8 +3,10 @@
 Reads one scenario run: out/frames/*.png, out/run.log (peers log with timestamps), out/ble.pcap, sim/overlay.board (button script).
 Usage: ./run.sh > out/run.log   (or: sim run --scenario sim/scenario.yaml > out/run.log), then python3 scripts/demo_gif.py [out_gif]
 Starts at t = 0 (the display is dark until the firmware first draws). Dead time is skipped: a GIF frame is made when the display changes, a button moves or traffic arrives; the clock shows the real time.
+Under it an IRQ panel: the top 8 interrupts in the trailing 0.5 s (bars, log scale, rate per second) and the total IRQ/s over the run with a cursor.
+Reads out/irq_rates.json (made by run.sh from --trace-interrupts, binned at 100 ms; a temporary input, not kept). Without it the panel is left out.
 Rows: I2C writes (one per 0.25 s), sensor hub SPI messages, radio UART, GPS UART handshake, one BLE advert per second, buttons."""
-import glob, json, os, re, sys
+import glob, json, math, os, re, sys
 from PIL import Image, ImageDraw, ImageFont
 sys.path.insert(0, os.path.dirname(__file__))
 from watch_render import BUTTONS, watch
@@ -12,6 +14,8 @@ from ble_phone import scan, ad_fields
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "docs/screens/demo.gif"
 W, H, WATCH_W, ROWS = 900, 500, 320, 13
+PH = 170  # IRQ panel height under the traffic view
+WIN = 0.5  # seconds of trailing window for the bar rates
 COL = {"uart": (110, 200, 255), "gps": (255, 214, 102), "air": (120, 230, 140), "btn": (255, 150, 40),
        "i2c": (255, 120, 190), "hub": (190, 150, 255)}
 BG, FG, DIM = (18, 20, 24), (225, 225, 225), (130, 135, 145)
@@ -105,6 +109,50 @@ def events():
     return sorted(ev, key=lambda e: e[0]), presses
 
 
+IRQ_NAME = {"30": "LPUART0 (radio)", "31": "LPUART1", "32": "LPUART2", "33": "LPUART3 (GPS)", "34": "LPUART4", "24": "I2C0", "25": "I2C1",
+            "74": "I2C2", "91": "I2C3 (power)", "26": "SPI0", "27": "SPI1", "65": "SPI2 (hub)", "46": "RTC alarm", "47": "RTC seconds",
+            "48": "PIT0", "49": "PIT1", "50": "PIT2", "51": "PIT3", "58": "LPTMR0", "59": "PORTA", "60": "PORTB", "61": "PORTC",
+            "62": "PORTD", "63": "PORTE", "70": "FlexIO0 (display)", "100": "QuadSPI0", "39": "ADC0", "13": "DMA ch13/29", "15": "DMA ch15/31",
+            "PendSV": "PendSV", "SysTick": "SysTick"}  # the chip's own NVIC wiring (mk28fn2m0.rs); DMA channel n and n+16 share IRQ n
+
+
+def load_irq():
+    if not os.path.exists("out/irq_rates.json"):
+        return None
+    b = {k: {int(i): c for i, c in v.items()} for k, v in json.load(open("out/irq_rates.json"))["bins"].items()}
+    n = max(i for v in b.values() for i in v) + 1
+    return b, n
+
+
+def irq_name(k):
+    return IRQ_NAME.get(k) or IRQ_NAME.get(k.removeprefix("IRQ"), k)
+
+
+def irq_panel(d, irq, t, fnt):
+    bins, n = irq
+    y0, x0 = H, 12
+    d.line((0, y0, W, y0), fill=(60, 64, 72))
+    lo, hi = max(0, int((t - WIN) * 10)), int(t * 10) + 1
+    rate = sorted(((sum(v.get(i, 0) for i in range(lo, hi)) / ((hi - lo) / 10), k) for k, v in bins.items()), reverse=True)[:8]
+    rate = [r for r in rate if r[0]]
+    d.text((x0, y0 + 6), f"IRQ entries/s, last {WIN:g} s (log bars)", font=fnt, fill=DIM)
+    for r, (v, k) in enumerate(rate):
+        y = y0 + 24 + r * 17
+        d.text((x0, y), irq_name(k)[:18], font=fnt, fill=FG)
+        d.rectangle((x0 + 150, y + 2, x0 + 150 + 250 * math.log10(1 + v) / 3.5, y + 11), fill=COL["btn"])
+        d.text((x0 + 410, y), f"{v:6.0f}", font=fnt, fill=FG)
+    sx, sw, sy, sh = 520, W - 530, y0 + 40, PH - 56
+    tot = [sum(v.get(i, 0) for v in bins.values()) * 10 for i in range(n)]  # per 100 ms bin -> per s
+    sm = [sum(tot[max(0, i - 2):i + 3]) / len(tot[max(0, i - 2):i + 3]) for i in range(n)]
+    top = math.log10(1 + max(sm)) * 1.05
+    d.text((sx, y0 + 6), f"total IRQ/s over the run, log (peak {max(sm):.0f}/s)", font=fnt, fill=DIM)
+    d.rectangle((sx, sy, sx + sw, sy + sh), outline=(60, 64, 72))
+    d.line([(sx + sw * i / n, sy + sh - sh * math.log10(1 + sm[i]) / top) for i in range(n)], fill=COL["hub"], width=1)
+    cx = sx + sw * min(t * 10, n) / n
+    d.line((cx, sy - 4, cx, sy + sh + 4), fill=COL["btn"], width=2)
+    d.text((sx, sy + sh + 4), "0 s", font=fnt, fill=DIM); d.text((sx + sw - 42, sy + sh + 4), f"{n / 10:.0f} s", font=fnt, fill=DIM)
+
+
 def font(sz):
     for p in ("/System/Library/Fonts/Menlo.ttc", "/System/Library/Fonts/Monaco.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"):
         if os.path.exists(p):
@@ -114,16 +162,18 @@ def font(sz):
 
 def main():
     ev, presses = events()
+    irq = load_irq()
+    full = H + (PH if irq else 0)  # the traffic view keeps its size; the panel is added below it
     fs = sorted(glob.glob("out/frames/*.png"))
     ft = [int(re.search(r"_(\d+)ms", f).group(1)) / 1000 for f in fs]
     t0, t1 = 0.0, ft[-1] + 0.2
     fnt, big = font(12), font(17)
     # candidate ticks: display frames, events, button edges; keep one per 0.3 s of simulated time, plus every button edge
     edges = {p for p, _ in presses} | {p + 0.3 for p, _ in presses}
-    cand = sorted({t for t, _, _ in ev if t0 <= t <= t1} | set(ft) | edges | {0.0})
+    cand = sorted({t for t, _, _ in ev if t0 <= t <= t1} | set(ft) | edges | {0.0} | ({float(x) for x in range(0, int(t1), 2)} if irq else set()))
     ticks, last = [], -9
     for t in cand:
-        if t - last >= 0.3 or t in edges:
+        if t - last >= 0.35 or t in edges:
             ticks.append(t); last = t
     frames, durs, fi, shown, prev_fi = [], [], 0, [], None
     ei = 0
@@ -137,7 +187,7 @@ def main():
         pressed = next((n for p, n in presses if p <= t < p + 0.3), None)
         w = watch(Image.open(fs[max(fi, 0)]) if fi >= 0 else Image.new("RGB", Image.open(fs[0]).size), pressed)
         w = w.resize((WATCH_W, WATCH_W * 600 // 480), Image.LANCZOS)
-        im = Image.new("RGB", (W, H), BG)
+        im = Image.new("RGB", (W, full), BG)
         im.paste(w, (0, (H - w.height) // 2))
         d = ImageDraw.Draw(im)
         x0 = WATCH_W + 12
@@ -161,14 +211,16 @@ def main():
         for k, name in (("i2c", "I2C power"), ("hub", "hub SPI"), ("uart", "radio UART"), ("gps", "GPS UART"), ("air", "BLE air"), ("btn", "button")):
             d.rectangle((lx, H - 22, lx + 9, H - 13), fill=COL[k]); d.text((lx + 14, H - 24), name, font=fnt, fill=DIM)
             lx += 14 + 7 * len(name) + 14
+        if irq:
+            irq_panel(d, irq, t, fnt)
         frames.append(im)
         changed = fi != prev_fi; prev_fi = fi
         durs.append(300 if changed else 110)
     # one shared palette (sampled over the whole run) keeps the text colours stable between frames
-    mosaic = Image.new("RGB", (W, H * 12))
+    mosaic = Image.new("RGB", (W, full * 12))
     for k in range(12):
-        mosaic.paste(frames[k * len(frames) // 12], (0, k * H))
-    pal = mosaic.quantize(96, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
+        mosaic.paste(frames[k * len(frames) // 12], (0, k * full))
+    pal = mosaic.quantize(64, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
     frames = [f.quantize(palette=pal, dither=Image.Dither.NONE) for f in frames]
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     frames[0].save(OUT, save_all=True, append_images=frames[1:], duration=durs, loop=0, optimize=True)
