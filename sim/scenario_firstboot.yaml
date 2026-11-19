@@ -1,0 +1,15 @@
+# Boot (about 63 s virtual: the firmware formats the QuadSPI NOR first), then PTD10 at 68 s selects English, PTD1 at 71 s goes back, PTD10 at 75 s selects English again (events are in overlay.board, `btn`; a second PTD10 at 80 s answers Yes).
+machines:
+  dut:
+    mcu: MK28FN2M0VMI15
+    overlay: overlay.board
+    elf: ../out/fr245.elf
+media:
+  - type: uart
+    connect: [dut.lpuart3, dut.link]
+  - type: uart
+    connect: [dut.lpuart0, dut.cyw]
+  - type: ble
+    connect: [dut.cyw, dut.phone]
+    pcap: ../out/ble.pcap
+timeout: 90

@@ -37,3 +37,11 @@ def test_srdy_idles_high_then_pulses_low_after_reset_release():
 
 if __name__ == "__main__":
     test_srdy_idles_high_then_pulses_low_after_reset_release(); print("ok")
+
+
+def test_spi_frame_helpers():
+    spec = importlib.util.spec_from_file_location("hubspi", Path(__file__).resolve().parent.parent / "spi" / "garmin_sensor_hub_spi.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    assert m.header(6) == bytes.fromhex("24fa060000000000000000000024")   # the K28's own request
+    assert m.valid(m.header(0x186C, 8, 8, 1)) and not m.valid(b"\x24" + bytes(13))

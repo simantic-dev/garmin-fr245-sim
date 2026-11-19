@@ -6,8 +6,9 @@ pmic: I2C.ScriptedI2cSlave @ i2c3 0x28
     0 -> gpioa@21
 hubspi: SPI.ScriptedSpiSlave @ spi2 0
     file: "peers/spi/garmin_sensor_hub_spi.py"
-    numberOfGpios: 2
+    numberOfGpios: 3
     0 -> gpiob@5
+    2 -> gpioa@11
 gpioa:
     27 -> hubspi@1
     pullUps: "20 22"

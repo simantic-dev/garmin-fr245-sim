@@ -4,6 +4,7 @@ machines:
     mcu: MK28FN2M0VMI15
     overlay: overlay.board
     elf: ../out/fr245.elf
+    preload: ["../out/factory_nor.bin@0x68000000"]
 media:
   - type: uart
     connect: [dut.lpuart3, dut.link]
