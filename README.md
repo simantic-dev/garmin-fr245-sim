@@ -145,3 +145,15 @@ Put a Forerunner 245 (Music) in pairing mode and scan with nRF Connect. The adve
   from a panel datasheet; the panel is unidentified.
 - Fuel gauge, PMIC and sensor hub peers are scripted register models; timing is not measured against a watch.
 - No GPS or heart-rate models; the radio is the stand-in above. The flash filesystem is the shared NOR model with an erased (0xFF) array; its size (32 MiB) and timing are not the FR245 part's.
+
+## GPS (LPUART3, Sony CXD5603): decoded so far
+
+Peer: `peers/uart/sony_cxd5603_gnss.py`. Read off the firmware (RX parser 0xAC874, command queue 0xAC3D4, ACK check 0xACA58), not invented.
+
+- Frame: `10 id len payload cksum 10 03`, DLE doubled in the body. Id 0x7b wraps `u32 data_len | u16 inner_id | data`. Inner 0xBD5 carries `u16 sub | u16 0 | u32 size | data`.
+- The queue sends a message, waits 3000 ms for the ACK, resends once, then moves on (the 3.0 s spacing).
+- ACK = 0xBD5 sub 8, data `u16 inst_id | u16 ack_sub | u32 data_size | u32 status`. The firmware compares inst_id with the sent id, ack_sub with 0xFFFF (0x0A and 0xBD5: first u16 of the sent data) and data_size with the sent data length. Status is only printed.
+- Sent and ACKed: 0x2F `00`, 0xBBD `01000000`, 0x0A `6c00`. With these ACKs the queue stops waiting 3 s per message; the next requests follow within milliseconds (0xBD5 sub 9, 0xF9, 0x0A `ff01`).
+- RX 0xBBC (u32) stores the value the 0xBBD "set" is compared against (0xAE85C, read by 0xAE6A8); 0xBBD is sent only when it differs.
+- Open: the 0xBD5 sub 1 config (32 bytes: baud 115200, 0x201, 13, 161, 5, 100, 0, 0x00020001) is still resent at 62.0 and 65.0 s. Echoing it as RX sub 1 reaches 0xAE8D8, whose memcmp against the config at 0x2002576c fails, so the chip's reply differs from what the firmware sent. Position, time and satellite messages were not found and nothing is fed: there is no GPS stream in this repo yet.
+- 0xAFDF4 is a map-coordinate affine transform, not the GNSS receive path.
