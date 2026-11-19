@@ -69,6 +69,21 @@ class Peer:
             return
         if mid == 0xBD5 and data[:2] == b"\x01\x00":
             # sub 1 = device config (32 bytes): the firmware compares the chip's reply with the config it wants (0xAE8D8)
-            self.ctx.info("gnss tx echo cfg"); self.ctx.send(bd5(1, data[8:]))
+            # The firmware sends the 32-byte config with bit 0 set in words 2, 3 and 4 (12|1, 160|1, 4|1: "apply" flags,
+            # set by 0xAECDA-0xAECE2). 0xAE8D8 memcmps the reply against its own copy at 0x2002576c, found by probing
+            # the memcmp result (0xAE90E): {115200, 0x201, 12, 160, 4, 100, 0, 0x20001}. So the reply is the sent
+            # config with those flags cleared (the chip applied it). MODELED SIMPLIFICATION: which words carry the flag.
+            w = list(struct.unpack_from("<8I", data, 8))
+            for i in (2, 3, 4):
+                w[i] &= ~1
+            self.ctx.send(bd5(1, struct.pack("<8I", *w)))
+        if pid == 0x30:
+            # 0x30 carries the baud 0x70800 = 460800; 0xAF87C: RX 0x31 (4 bytes) is accepted when its u32 equals the sent one
+            self.ctx.send(frame(0x31, data))
+            return
+        if pid == 0x0A and data[:2] == b"\x3a\x00":
+            # MODELED SIMPLIFICATION: no position/time stream yet. 0xACB52-0xACB9A: an ACK of 0x0A/0x3A with status 1 calls 0xAF87C(0x3A), which sets the "3A answered" flag
+            self.ctx.send(ack(mid, 0x3A, len(data), status=1))
+            return
         sub = struct.unpack_from("<H", data, 0)[0] if mid in (0x0A, 0xBD5) and len(data) >= 2 else 0xFFFF
         self.ctx.send(ack(mid, sub, len(data)))
