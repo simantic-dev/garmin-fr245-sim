@@ -8,3 +8,4 @@ SIM="${SIM:-sim}"
 rm -rf out/frames && mkdir -p out/frames
 "$SIM" run --scenario sim/scenario.yaml
 ls out/frames | wc -l | xargs echo "frames written to out/frames:"
+python3 scripts/ble_phone.py out/ble.pcap

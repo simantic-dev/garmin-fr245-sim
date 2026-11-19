@@ -5,11 +5,9 @@
 # opcode 0x1b4a (firmware flag 0x20010079 is set by it, and its sender returns early until then).
 #
 # MODELED SIMPLIFICATION: this is NOT a WICED HCI Control or HCI implementation. No CYW image and no spec for
-# Garmin's own opcodes exist here, so there is no reset/patch/version/advertising handling and no BLE medium
-# bridge. After 0x1b4a the firmware still sent nothing in 40 s of virtual time. The 5.0 s send time is a stand-in
-# for "after the reset line is released" (the firmware releases PTA26 at about 4.86 s).
-START_US = 5_000_000
-PERIOD_US = 1_000_000
+# Garmin's own opcodes exist here, so there is no reset/patch/version handling. The peer speaks when the DUT's
+# LPUART0 receiver turns on (`on_rx_enable`, CTRL[RE]), not on timers. Advertising is bridged to the sim's BLE
+# medium (`ctx.ble_*`): the 0x08 config command is parsed and put on the air by the sim's link layer.
 HEADER = 0x19
 # "Stack enabled" event. Read off the firmware, v3.10: the radio-event task (0xd18b0) hands opcodes 0x1984..0x1986
 # to 0x31614, which forwards the payload as a message to 0x30f00. A message whose byte 0 is 0x24 sets the
@@ -20,9 +18,6 @@ HEADER = 0x19
 # MODELED SIMPLIFICATION: which opcode in 0x1984..0x1986 the real radio uses, and the body of its 0x24 message
 # (BD address, 27-byte max payload at 0x30f00), are not known; this sends the empty message under 0x1984.
 STACK_UP_OPCODE = 0x1984
-# Once only (each 0x24 re-runs the init and restarts its state machine). The sim cannot say when LPUART0 is enabled
-# (about 55.4 s here), so this is a boot-time stand-in.
-STACK_UP_US = 56_000_000
 STACK_UP_MSG = bytes([0x24]) + bytes(11)
 
 
@@ -56,27 +51,52 @@ class Peer:
     def __init__(self, ctx):
         self.ctx = ctx
         self.parser = Parser()
-        self.heard = False
-        self.stack_up = False
         self.handle = 0
-        ctx.schedule_oneshot(START_US)
+        self.name = b""
+        self.adv_on = False
 
-    def on_timer(self):
-        # MODELED SIMPLIFICATION: the sim has no radio-ready event for this UART, and bytes sent while the
-        # firmware's LPUART0 is still disabled are dropped, so repeat the gate-opener once a second until
-        # the host sends its first byte.
-        if not self.heard:
-            self.ctx.send(frame(0x1B4A))
-            if self.ctx.now_us >= STACK_UP_US and not self.stack_up:
-                self.stack_up = True
-                self.ctx.send(frame(STACK_UP_OPCODE, STACK_UP_MSG))
-            self.ctx.schedule_oneshot(PERIOD_US)
+    def on_rx_enable(self):
+        self.ctx.send(frame(0x1B4A))
+        self.ctx.send(frame(STACK_UP_OPCODE, STACK_UP_MSG))
+
+    def advertise(self, cfg):
+        """The 400-byte 0x08 config (offsets read off its builder 0x2233c0): [399] mode, [40] UUID count, [42..] the
+        16-bit UUIDs, [113] company, [115] manufacturer data length, [117..] that data, [196] flags."""
+        on = cfg[399] == 1
+        if not on:
+            if self.adv_on:
+                self.ctx.ble_advertise(False)
+            self.adv_on = False
+            self.ctx.info(f"cyw adv off t={self.ctx.now_us / 1e6:.3f}s")
+            return
+        ad = bytes([2, 0x01, cfg[196]])
+        n = cfg[40]
+        if n:
+            ad += bytes([1 + 2 * n, 0x03]) + cfg[42:42 + 2 * n]
+        mlen = cfg[115] | cfg[116] << 8
+        ad += bytes([3 + mlen, 0xFF]) + cfg[113:115] + cfg[117:117 + mlen]
+        # MODELED SIMPLIFICATION: flags + UUID + manufacturer data leave 13 of the 31 AdvData bytes, so the full
+        # name (0x16 command) goes in the scan response and a shortened name rides in the ADV_IND. Which of the
+        # two the real radio uses is not known.
+        room = 31 - len(ad) - 2
+        nm = self.name[:room].rstrip()
+        if nm:
+            ad += bytes([1 + len(nm), 0x08 if len(self.name) > room else 0x09]) + nm
+        self.ctx.ble_adv_data(ad)
+        self.ctx.ble_scan_rsp(bytes([1 + len(self.name), 0x09]) + self.name)
+        self.ctx.ble_advertise(True)
+        self.adv_on = True
+        self.ctx.info(f"cyw adv on t={self.ctx.now_us / 1e6:.3f}s ad={ad.hex()}")
 
     def on_byte(self, b):
-        self.heard = True
         f = self.parser.feed(b)
         if f:
             self.ctx.info(f"cyw rx opcode={f[0]:#06x} payload={f[1].hex()}")
+            if f[0] == 0x1982 and f[1][:1] == b"\x16" and len(f[1]) >= 12:
+                # Set device name: [6..7] length, name bytes from [12] (0x2233c0's neighbour; "Forerunner 245").
+                self.name = f[1][12:12 + (f[1][6] | f[1][7] << 8)]
+            if f[0] == 0x1982 and f[1][:1] == b"\x08" and len(f[1]) == 400:
+                self.advertise(f[1])
             if f[0] == 0x1982 and f[1][:1] == b"\x37" and len(f[1]) >= 20:
                 # Add-service command (37 <app id> 14 00 <16-byte UUID>), nine of them from the table at 0x223ccc.
                 # The handler (0x223578 case 0x37 -> 0x2235ce) matches [10..25] against that table, stores [9]

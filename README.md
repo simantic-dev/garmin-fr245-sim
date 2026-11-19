@@ -52,7 +52,7 @@ screen answers PTD10 at 75 s: [English selected](docs/screens/6-english-selected
 [Pair with phone? Yes / No](docs/screens/7-pair-with-phone-75s.png). The scenario runs 80 s virtual (about 90 s wall).
 On the pair screen PTD10 selects the highlighted entry (a second press at 80 s moves to an "Initializing" screen, [frame](docs/screens/8-initializing-after-yes-95s.png)); PTA20 moves the highlight Yes to No.
 
-## Bluetooth (GATT table built, advertising config sent; no BLE medium bridge yet)
+## Bluetooth (advertising goes over the simulated air)
 
 The radio is a CYW20719 on LPUART0 (reset PTA26). With `cyw20719_wiced.py` the firmware (v3.10) completes BLE init: register
 app, 0x42, nine 0x37 add-service, 0x16 name "Forerunner 245", 0x12, 0x14, 0x08, then the GATT table build from the 14-entry
@@ -66,10 +66,38 @@ Mode 1 carries flags 0x06, a 16-bit service list with 0xFE1F (Garmin) and manufa
 07 00 0c 04 01 and a 4-byte unit id, ff ff ff ff here); the name comes from the earlier 0x16 command. Mode 1 is sent at
 60.5 s and 80.0 s, mode 0 at 63.5 s (cause not yet found).
 
-Open: a BLE medium bridge (nothing hands a Python UART peer's frames to a link-layer radio, and the engine has no scripted
-central that scans or connects), a phone scan line, and whether the Initializing screen leaves. The 0x1b4a gate frame and
-the 0x24 stack-enabled event are still timer-driven (MODELED SIMPLIFICATION): the engine does not tell a peer that the DUT
-enabled LPUART0 RX (about 55.4 s). The LPUART knows (`CTRL_RE`), so a flag on the peer's RxLine would remove both timers.
+### Over the air to a simulated phone
+
+`scripts/ble_phone.py out/ble.pcap` is the phone. The scenario's BLE medium joins the radio (`dut.cyw`) to a second
+endpoint (`dut.phone`, a listening radio) and writes every advertisement to `out/ble.pcap` (BLE LL with PHDR, opens in
+Wireshark); the script decodes it:
+
+```
+[  59.9068s] ch37 ADV_IND  00:00:00:00:00:00  flags=0x06  uuids=0xFE1F  company=0x0087 mfg=0c0401ffffffff  name="Forerunner" (shortened)
+   ... until 63.4887s: 168 advertisements
+[  80.0295s] ch37 ADV_IND  00:00:00:00:00:00  flags=0x06  uuids=0xFE1F  company=0x0087 mfg=0c0401ffffffff  name="Forerunner" (shortened)
+   ... until 89.9734s: 462 advertisements
+```
+
+Nothing is on the air from 63.51 s (mode 0) to 80.03 s. The watch screen at those moments: boot logo while advertising
+([59.9 s](docs/screens/9-adv-on-59.9s.png)), still the logo at [mode 0, 63.5 s](docs/screens/10-adv-off-63.5s.png), and
+[80.0 s](docs/screens/11-adv-on-80.0s.png).
+
+Real firmware: the unmodified v3.10 image builds and sends the 0x16 name and the 0x08 config. The peer decodes them
+(offsets from the builder at 0x2233c0), so the on/off times (59.9 s on, 63.5 s off, 80.0 s on) are the firmware's own.
+The peer now speaks when the DUT enables the LPUART0 receiver (55.406 s; the sim passes `CTRL[RE]` to the peer as
+`on_rx_enable`), once: 0x1b4a then 0x24. No timer, and the firmware needed no repeat.
+
+Stand-ins:
+
+- The CYW20719's WICED protocol is not implemented (see the peer's header); handles, app id and the 0x24 body are guesses.
+- The phone is a passive receiver plus a pcap decoder, not a scanner: it never sends SCAN_REQ, so the full name
+  "Forerunner 245" (in the scan response, from the 0x16 command) is never requested. flags, the UUID list and
+  manufacturer data leave 13 of the 31 AdvData bytes, so the ADV_IND carries "Forerunner" as a shortened name.
+- The advertising address is all zeros (the radio's BD address is not known) and the interval is the link layer's default.
+- The unit id in the manufacturer data is the firmware's ff ff ff ff.
+
+Open: a scanning/connecting central, and whether the Initializing screen leaves.
 
 ## Known gaps
 
@@ -80,4 +108,4 @@ enabled LPUART0 RX (about 55.4 s). The LPUART knows (`CTRL_RE`), so a flag on th
 - The display peer's pixel framing and line packing were derived from observed waveforms and the firmware's packer, not
   from a panel datasheet; the panel is unidentified.
 - Fuel gauge, PMIC and sensor hub peers are scripted register models; timing is not measured against a watch.
-- No radio, GPS, heart-rate models. The flash filesystem is the shared NOR model with an erased (0xFF) array; its size (32 MiB) and timing are not the FR245 part's.
+- No GPS or heart-rate models; the radio is the stand-in above. The flash filesystem is the shared NOR model with an erased (0xFF) array; its size (32 MiB) and timing are not the FR245 part's.

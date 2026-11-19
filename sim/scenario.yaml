@@ -9,4 +9,7 @@ media:
     connect: [dut.lpuart3, dut.link]
   - type: uart
     connect: [dut.lpuart0, dut.cyw]
+  - type: ble
+    connect: [dut.cyw, dut.phone]
+    pcap: ../out/ble.pcap
 timeout: 90

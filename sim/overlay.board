@@ -52,3 +52,6 @@ link: UART.ScriptedUartPeer @ sysbus 0x60200000
 cyw: UART.ScriptedUartPeer @ sysbus 0x60200100
     file: "peers/uart/cyw20719_wiced.py"
     baudRate: 3000000
+
+phone: UART.ScriptedUartPeer @ sysbus 0x60200200
+    file: "peers/uart/ble_phone.py"
