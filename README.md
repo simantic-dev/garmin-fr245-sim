@@ -50,7 +50,16 @@ With the QuadSPI NOR backed by the array (pyrite branch `agent/fr245-boot-3744`)
 flash filesystem on first boot (about 63 s of virtual time, erase times from the shared NOR model), then the language
 screen answers PTD10 at 75 s: [English selected](docs/screens/6-english-selected-75s.png), then
 [Pair with phone? Yes / No](docs/screens/7-pair-with-phone-75s.png). The scenario runs 80 s virtual (about 90 s wall).
-PTA20 (START) pressed at 70 s showed no change; which key is select is not confirmed.
+On the pair screen PTD10 selects the highlighted entry (a second press at 80 s moves to an "Initializing" screen, [frame](docs/screens/8-initializing-after-yes-95s.png)); PTA20 moves the highlight Yes to No.
+
+## Bluetooth (not yet advertising)
+
+The radio is a CYW20719 on LPUART0 (reset PTA26). Measured on v3.10: the firmware enables LPUART0 at about 55.4 s, so
+bytes the peer sent at 5 s were dropped; `cyw20719_wiced.py` now repeats the gate-opening frame (opcode 0x1b4a) once a
+second until the host sends a byte (MODELED SIMPLIFICATION, no radio-ready event exists). It is accepted from 56 s
+(flag 0x20010079 set at 56.0 s), but after "Yes" the firmware sent no byte on LPUART0 through 95 s: the radio send path
+(0xbe074) and the BLE enable routine (0x2262c4) were never reached, so there are no host frames to decode yet and no
+advertising data. Open: which event the "Initializing" screen waits for. No BLE medium bridge exists yet.
 
 ## Known gaps
 

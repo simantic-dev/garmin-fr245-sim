@@ -45,6 +45,15 @@ def test_peer_opens_the_gate_and_logs():
     assert c.us == cyw.START_US
     peer.on_timer()
     assert c.sent == [bytes.fromhex("19 00 13 02 00 4a 1b")]
+    assert c.us == cyw.PERIOD_US  # repeats until the host speaks
     for b in cyw.frame(0x0BD6):
         peer.on_byte(b)
     assert c.lines == ["cyw rx opcode=0x0bd6 payload="]
+
+
+def test_gate_opener_stops_once_host_speaks():
+    c = Ctx()
+    peer = cyw.Peer(c)
+    peer.on_byte(0x19)
+    peer.on_timer()
+    assert c.sent == []

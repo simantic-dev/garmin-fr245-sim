@@ -9,6 +9,7 @@
 # bridge. After 0x1b4a the firmware still sent nothing in 40 s of virtual time. The 5.0 s send time is a stand-in
 # for "after the reset line is released" (the firmware releases PTA26 at about 4.86 s).
 START_US = 5_000_000
+PERIOD_US = 1_000_000
 HEADER = 0x19
 
 
@@ -42,12 +43,19 @@ class Peer:
     def __init__(self, ctx):
         self.ctx = ctx
         self.parser = Parser()
+        self.heard = False
         ctx.schedule_oneshot(START_US)
 
     def on_timer(self):
-        self.ctx.send(frame(0x1B4A))
+        # MODELED SIMPLIFICATION: the sim has no radio-ready event for this UART, and bytes sent while the
+        # firmware's LPUART0 is still disabled are dropped, so repeat the gate-opener once a second until
+        # the host sends its first byte.
+        if not self.heard:
+            self.ctx.send(frame(0x1B4A))
+            self.ctx.schedule_oneshot(PERIOD_US)
 
     def on_byte(self, b):
+        self.heard = True
         f = self.parser.feed(b)
         if f:
             self.ctx.info(f"cyw rx opcode={f[0]:#06x} payload={f[1].hex()}")
