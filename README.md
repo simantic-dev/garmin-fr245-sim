@@ -1,7 +1,7 @@
 ## Run Garmin Forerunner 245 firmware in a simulator
 
 ```sh
-./run.sh    # downloads Garmin's v3.10 firmware, runs 27 virtual s (about 15 s wall), writes PNG frames to out/frames/
+./run.sh    # downloads Garmin's v3.10 firmware, runs 80 virtual s (about 90 s wall), writes PNG frames to out/frames/
 ```
 
 ![boot logo, language screen, scrolled screen, back, redraw](docs/screens/contact-sheet.png)
@@ -44,6 +44,14 @@ point `SIM=/path/to/sim ./run.sh` at a build that has it.
 
 Peer tests: `python3 -m pytest peers`.
 
+## Reaching "Pair with phone?"
+
+With the QuadSPI NOR backed by the array (pyrite branch `agent/fr245-boot-3744`), the firmware formats its 32 MiB
+flash filesystem on first boot (about 63 s of virtual time, erase times from the shared NOR model), then the language
+screen answers PTD10 at 75 s: [English selected](docs/screens/6-english-selected-75s.png), then
+[Pair with phone? Yes / No](docs/screens/7-pair-with-phone-75s.png). The scenario runs 80 s virtual (about 90 s wall).
+PTA20 (START) pressed at 70 s showed no change; which key is select is not confirmed.
+
 ## Known gaps
 
 - The host-link reply on LPUART3 is unknown, so `garmin_link_peer.py` only logs. The firmware retries about 3 times before
@@ -53,4 +61,4 @@ Peer tests: `python3 -m pytest peers`.
 - The display peer's pixel framing and line packing were derived from observed waveforms and the firmware's packer, not
   from a panel datasheet; the panel is unidentified.
 - Fuel gauge, PMIC and sensor hub peers are scripted register models; timing is not measured against a watch.
-- No radio, GPS, heart-rate or flash-filesystem models.
+- No radio, GPS, heart-rate models. The flash filesystem is the shared NOR model with an erased (0xFF) array; its size (32 MiB) and timing are not the FR245 part's.

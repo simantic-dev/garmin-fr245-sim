@@ -1,4 +1,4 @@
-# Boot, then press each of the five buttons for 300 ms (events are in overlay.board, `btn`).
+# Boot (about 63 s virtual: the firmware formats the QuadSPI NOR first), then PTD10 at 75 s selects English (events are in overlay.board, `btn`).
 machines:
   dut:
     mcu: MK28FN2M0VMI15
@@ -9,4 +9,4 @@ media:
     connect: [dut.lpuart3, dut.link]
   - type: uart
     connect: [dut.lpuart0, dut.cyw]
-timeout: 27
+timeout: 80
